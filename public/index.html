@@ -731,33 +731,90 @@ async function parseFiles(files){
 }
 
 async function parsePDF(file){
-  const buf=await rBuf(file);
-  const pdf=await pdfjsLib.getDocument({data:buf}).promise;
-  const metaObj=await pdf.getMetadata().catch(()=>({}));
-  const meta=metaObj.info||{};
-  let text='';
-  const rows=[];
-  const lim=Math.min(pdf.numPages,80);
-  for(let i=1;i<=lim;i++){
-    const pg=await pdf.getPage(i);
-    const tc=await pg.getTextContent();
-    const pt=tc.items.map(it=>it.str).join(' ');
-    text+=pt+'\n';
-    // IFTA-style: No  Date  Time  Location  Lat  Lng  Speed  Heading  Odometer  Eng.Hours
-    const joined=pt.replace(/\s+/g,' ');
-    const re=/(\d+)\s+(\d{1,2}\/\d{1,2}\/\d{4})\s+(\d{1,2}:\d{2}:\d{2}\s*(?:AM|PM))\s+(.+?)\s+(-?\d{1,3}\.\d{4,8})\s+(-?\d{1,3}\.\d{4,8})\s+(\d+\.?\d*)\s+(\d+)\s+([\d,]+\.?\d*)\s+([\d,]+\.?\d*)/g;
-    let m;
-    while((m=re.exec(joined))!==null){
-      rows.push({
-        no:+m[1],datetime:`${m[2]} ${m[3]}`,location:m[4].trim(),
-        lat:+m[5],lng:+m[6],speed:+m[7],heading:+m[8],
-        odometer:+m[9].replace(/,/g,''),engineHours:+m[10].replace(/,/g,'')
-      });
-    }
-  }
-  return{text,rows,meta};
-}
+  const buf = await rBuf(file);
+  const pdf = await pdfjsLib.getDocument({data:buf}).promise;
+  const metaObj = await pdf.getMetadata().catch(()=>({}));
+  const meta = metaObj.info || {};
+  let fullText = '';
+  const rows = [];
+  const lim = Math.min(pdf.numPages, 100);
 
+  for(let i=1;i<=lim;i++){
+    const page = await pdf.getPage(i);
+    const tc = await page.getTextContent();
+
+    // --- Strategy 1: Group items by Y-position (row-based parsing) ---
+    // PDF.js returns each word/token as a separate item with transform coords
+    // Group items that share approximately the same Y coordinate into rows
+    const yGroups = {};
+    tc.items.forEach(item => {
+      if(!item.str || !item.str.trim()) return;
+      // transform[5] is Y position (bottom of text baseline)
+      const y = Math.round(item.transform[5]);
+      if(!yGroups[y]) yGroups[y] = [];
+      yGroups[y].push({ str: item.str.trim(), x: item.transform[4] });
+    });
+
+    // Sort each row by X position, join into line
+    const sortedYs = Object.keys(yGroups).map(Number).sort((a,b)=>b-a); // top to bottom
+    const pageLines = sortedYs.map(y => {
+      const sorted = yGroups[y].sort((a,b)=>a.x-b.x);
+      return sorted.map(it=>it.str).join(' ');
+    });
+    const pageText = pageLines.join('\n');
+    fullText += pageText + '\n';
+
+    // --- Strategy 2: Parse IFTA/Movement Report rows ---
+    // Format: No  Date(MM/DD/YYYY)  Time(HH:MM:SS AM/PM)  Location  Lat  Lng  Speed  Heading  Odometer  EngHours
+    // After joining by X-pos, each data row looks like:
+    // "1 11/01/2025 10:06:46 AM 2.5mi S of Vienna, IL 37.450406 -88.887403 8.1 344 550,954.1 25,600.5"
+
+    pageLines.forEach(line => {
+      line = line.trim();
+      // Match: number  date  time  location  lat  lng  speed  heading  odometer  engHours
+      const m = line.match(
+        /^(\d{1,5})\s+(\d{1,2}\/\d{1,2}\/\d{4})\s+(\d{1,2}:\d{2}:\d{2}\s*[AP]M)\s+(.+?)\s+(-?\d{1,3}\.\d{3,8})\s+(-?\d{1,3}\.\d{3,8})\s+(\d{1,3}\.?\d*)\s+(\d{1,3})\s+([\d,]+\.?\d*)\s+([\d,]+\.?\d*)\s*$/
+      );
+      if(m){
+        rows.push({
+          no:      +m[1],
+          datetime:`${m[2]} ${m[3]}`,
+          date:     m[2],
+          time:     m[3],
+          location: m[4].trim(),
+          lat:      +m[5],
+          lng:      +m[6],
+          speed:    +m[7],
+          heading:  +m[8],
+          odometer: +m[9].replace(/,/g,''),
+          engineHours: +m[10].replace(/,/g,'')
+        });
+      }
+    });
+  }
+
+  // --- Strategy 3: Fallback — parse fullText as raw lines ---
+  if(rows.length === 0){
+    const allLines = fullText.split('\n');
+    allLines.forEach(line => {
+      line = line.trim();
+      const m = line.match(
+        /^(\d{1,5})\s+(\d{1,2}\/\d{1,2}\/\d{4})\s+(\d{1,2}:\d{2}:\d{2}\s*[AP]M)\s+(.+?)\s+(-?\d{1,3}\.\d{3,8})\s+(-?\d{1,3}\.\d{3,8})\s+(\d{1,3}\.?\d*)\s+(\d{1,3})\s+([\d,]+\.?\d*)\s+([\d,]+\.?\d*)\s*$/
+      );
+      if(m){
+        rows.push({
+          no:+m[1], datetime:`${m[2]} ${m[3]}`, date:m[2], time:m[3],
+          location:m[4].trim(), lat:+m[5], lng:+m[6],
+          speed:+m[7], heading:+m[8],
+          odometer:+m[9].replace(/,/g,''),
+          engineHours:+m[10].replace(/,/g,'')
+        });
+      }
+    });
+  }
+
+  return { text: fullText, rows, meta };
+}
 function rText(f){return new Promise((r,j)=>{const rd=new FileReader();rd.onload=()=>r(rd.result);rd.onerror=j;rd.readAsText(f)})}
 function rBuf(f){return new Promise((r,j)=>{const rd=new FileReader();rd.onload=()=>r(rd.result);rd.onerror=j;rd.readAsArrayBuffer(f)})}
 
@@ -809,22 +866,55 @@ async function startAnalysis(){
     `<div class="pstep" id="ps${i}"><div class="pdot"></div><span>${s}</span></div>`).join('');
   const fill=document.getElementById('pfill');
 
-  for(let i=0;i<steps.length;i++){
+  // Step 0-1: fake UI steps
+  for(let i=0;i<2;i++){
     document.getElementById('ps'+i).className='pstep act';
     fill.style.width=((i+1)/steps.length*100)+'%';
-    await delay(i===13?2400:360);
+    await delay(300);
     document.getElementById('ps'+i).className='pstep done';
   }
 
+  // Step 2: Actually parse files
+  document.getElementById('ps2').className='pstep act';
+  fill.style.width=(3/steps.length*100)+'%';
   const parsed=await parseFiles(UF);
+  document.getElementById('ps2').className='pstep done';
+  // Update file row counts
   parsed.forEach((p,i)=>{
     const el=document.getElementById('fst'+i);
     if(el){el.className='fitem-st '+(p.err?'st-err':'st-ok');el.textContent=p.err?'ERR':p.rows.length+' ROWS'}
   });
 
+  // Continue progress steps 3-12
+  for(let i=3;i<13;i++){
+    document.getElementById('ps'+i).className='pstep act';
+    fill.style.width=((i+1)/steps.length*100)+'%';
+    await delay(280);
+    document.getElementById('ps'+i).className='pstep done';
+  }
+
+  // If PDF returned 0 rows, try direct fullText line parsing as fallback
+  parsed.forEach(p => {
+    if(p.rows.length === 0 && p.type === 'pdf' && p.content){
+      const lines = p.content.split('\n');
+      lines.forEach(line => {
+        line = line.trim();
+        const m = line.match(/^(\d{1,5})\s+(\d{1,2}\/\d{1,2}\/\d{4})\s+(\d{1,2}:\d{2}:\d{2}\s*[AP]M)\s+(.+?)\s+(-?\d{1,3}\.\d{3,8})\s+(-?\d{1,3}\.\d{3,8})\s+(\d{1,3}\.?\d*)\s+(\d{1,3})\s+([\d,]+\.?\d*)\s+([\d,]+\.?\d*)\s*$/);
+        if(m) p.rows.push({no:+m[1],datetime:`${m[2]} ${m[3]}`,date:m[2],time:m[3],location:m[4].trim(),lat:+m[5],lng:+m[6],speed:+m[7],heading:+m[8],odometer:+m[9].replace(/,/g,''),engineHours:+m[10].replace(/,/g,'')});
+      });
+      // Update status display
+      const el = document.getElementById('fst'+parsed.indexOf(p));
+      if(el){ el.className='fitem-st st-ok'; el.textContent=p.rows.length+' ROWS'; }
+    }
+  });
+
   const eng=runEngine(parsed);
   const summary=buildSummary(parsed);
   const prompt=buildPrompt(summary,eng);
+
+  // Step 13: AI analysis
+  document.getElementById('ps13').className='pstep act';
+  fill.style.width=(14/steps.length*100)+'%';
 
   let deep='';
   try{
@@ -837,6 +927,12 @@ async function startAnalysis(){
       ?`[AI tahlili mavjud emas - lokal tahlil natijalari yuqorida]\n\nXato: ${e.message}\n\nLokal: ${eng.checks.length} tekshiruv, ${eng.violations.length} qoidabuzarlik, ball ${eng.score}/100`
       :`[AI analysis unavailable - local results shown above]\n\nError: ${e.message}\n\nLocal engine: ${eng.checks.length} checks, ${eng.violations.length} violations, score ${eng.score}/100`;
   }
+
+  document.getElementById('ps13').className='pstep done';
+  document.getElementById('ps14').className='pstep act';
+  fill.style.width='100%';
+  await delay(300);
+  document.getElementById('ps14').className='pstep done';
 
   prog.style.display='none';
   document.getElementById('results').style.display='block';
