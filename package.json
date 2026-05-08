@@ -1,0 +1,9 @@
+{
+  "name": "fmcsa-erods-audit",
+  "version": "1.0.0",
+  "description": "FMCSA eRODS ELD Audit Analyzer - AI-powered compliance tool",
+  "private": true,
+  "engines": {
+    "node": ">=18"
+  }
+}
