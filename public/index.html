@@ -737,83 +737,85 @@ async function parsePDF(file){
   const meta = metaObj.info || {};
   let fullText = '';
   const rows = [];
-  const lim = Math.min(pdf.numPages, 100);
+  // Limit to 30 pages to prevent hang on large PDFs (2460 pages = minutes)
+  const lim = Math.min(pdf.numPages, 30);
 
   for(let i=1;i<=lim;i++){
-    const page = await pdf.getPage(i);
-    const tc = await page.getTextContent();
-
-    // --- Strategy 1: Group items by Y-position (row-based parsing) ---
-    // PDF.js returns each word/token as a separate item with transform coords
-    // Group items that share approximately the same Y coordinate into rows
-    const yGroups = {};
-    tc.items.forEach(item => {
-      if(!item.str || !item.str.trim()) return;
-      // transform[5] is Y position (bottom of text baseline)
-      const y = Math.round(item.transform[5]);
-      if(!yGroups[y]) yGroups[y] = [];
-      yGroups[y].push({ str: item.str.trim(), x: item.transform[4] });
-    });
-
-    // Sort each row by X position, join into line
-    const sortedYs = Object.keys(yGroups).map(Number).sort((a,b)=>b-a); // top to bottom
-    const pageLines = sortedYs.map(y => {
-      const sorted = yGroups[y].sort((a,b)=>a.x-b.x);
-      return sorted.map(it=>it.str).join(' ');
-    });
-    const pageText = pageLines.join('\n');
-    fullText += pageText + '\n';
-
-    // --- Strategy 2: Parse IFTA/Movement Report rows ---
-    // Format: No  Date(MM/DD/YYYY)  Time(HH:MM:SS AM/PM)  Location  Lat  Lng  Speed  Heading  Odometer  EngHours
-    // After joining by X-pos, each data row looks like:
-    // "1 11/01/2025 10:06:46 AM 2.5mi S of Vienna, IL 37.450406 -88.887403 8.1 344 550,954.1 25,600.5"
-
-    pageLines.forEach(line => {
-      line = line.trim();
-      // Match: number  date  time  location  lat  lng  speed  heading  odometer  engHours
-      const m = line.match(
-        /^(\d{1,5})\s+(\d{1,2}\/\d{1,2}\/\d{4})\s+(\d{1,2}:\d{2}:\d{2}\s*[AP]M)\s+(.+?)\s+(-?\d{1,3}\.\d{3,8})\s+(-?\d{1,3}\.\d{3,8})\s+(\d{1,3}\.?\d*)\s+(\d{1,3})\s+([\d,]+\.?\d*)\s+([\d,]+\.?\d*)\s*$/
-      );
-      if(m){
-        rows.push({
-          no:      +m[1],
-          datetime:`${m[2]} ${m[3]}`,
-          date:     m[2],
-          time:     m[3],
-          location: m[4].trim(),
-          lat:      +m[5],
-          lng:      +m[6],
-          speed:    +m[7],
-          heading:  +m[8],
-          odometer: +m[9].replace(/,/g,''),
-          engineHours: +m[10].replace(/,/g,'')
-        });
-      }
+    try{
+      const page = await pdf.getPage(i);
+      const tc = await page.getTextContent();
+      // Group items by Y-position (PDF.js returns each token separately)
+      const yGroups = {};
+      tc.items.forEach(item => {
+        if(!item.str||!item.str.trim()) return;
+        const y = Math.round(item.transform[5]);
+        if(!yGroups[y]) yGroups[y]=[];
+        yGroups[y].push({str:item.str.trim(), x:item.transform[4]});
+      });
+      const sortedYs = Object.keys(yGroups).map(Number).sort((a,b)=>b-a);
+      const pageLines = sortedYs.map(y=>{
+        return yGroups[y].sort((a,b)=>a.x-b.x).map(it=>it.str).join(' ');
+      });
+      fullText += pageLines.join('\n') + '\n';
+      // Parse IFTA/ELD row pattern
+      pageLines.forEach(line=>{
+        const r = parseIFTALine(line.trim());
+        if(r) rows.push(r);
+      });
+    } catch(e){ /* skip bad page */ }
+  }
+  // Fallback 1: parse fullText lines  
+  if(rows.length===0){
+    fullText.split('\n').forEach(line=>{
+      const r = parseIFTALine(line.trim());
+      if(r) rows.push(r);
     });
   }
-
-  // --- Strategy 3: Fallback — parse fullText as raw lines ---
-  if(rows.length === 0){
-    const allLines = fullText.split('\n');
-    allLines.forEach(line => {
-      line = line.trim();
-      const m = line.match(
-        /^(\d{1,5})\s+(\d{1,2}\/\d{1,2}\/\d{4})\s+(\d{1,2}:\d{2}:\d{2}\s*[AP]M)\s+(.+?)\s+(-?\d{1,3}\.\d{3,8})\s+(-?\d{1,3}\.\d{3,8})\s+(\d{1,3}\.?\d*)\s+(\d{1,3})\s+([\d,]+\.?\d*)\s+([\d,]+\.?\d*)\s*$/
-      );
-      if(m){
-        rows.push({
-          no:+m[1], datetime:`${m[2]} ${m[3]}`, date:m[2], time:m[3],
-          location:m[4].trim(), lat:+m[5], lng:+m[6],
-          speed:+m[7], heading:+m[8],
-          odometer:+m[9].replace(/,/g,''),
-          engineHours:+m[10].replace(/,/g,'')
-        });
-      }
+  // Fallback 2: generic - extract any rows with lat/lng pattern
+  if(rows.length===0){
+    const latLngRe = /(-?\d{1,3}\.\d{4,9})\s+(-?\d{1,3}\.\d{4,9})/g;
+    let m, lineNo=0;
+    fullText.split('\n').forEach(line=>{
+      const mm = line.match(/(-?\d{1,3}\.\d{4,9})\s+(-?\d{1,3}\.\d{4,9})/);
+      if(!mm) return;
+      const lat=+mm[1], lng=+mm[2];
+      if(lat<-90||lat>90||lng<-180||lng>180) return;
+      // Try to extract speed and odometer from same line
+      const nums = (line.match(/[\d,]+\.?\d*/g)||[]).map(n=>+n.replace(/,/g,''));
+      const spdCand = nums.filter(n=>n>=0&&n<=120);
+      const odoCand = nums.filter(n=>n>1000&&n<2000000);
+      const ehCand  = nums.filter(n=>n>100&&n<100000);
+      // Extract date/time
+      const dtm = line.match(/(\d{1,2}\/\d{1,2}\/\d{2,4})\s*(\d{1,2}:\d{2}:\d{2}\s*[AP]M)?/);
+      rows.push({
+        no: ++lineNo,
+        datetime: dtm ? dtm[0] : '',
+        date: dtm ? dtm[1]||'' : '',
+        time: dtm ? dtm[2]||'' : '',
+        location: line.replace(/[\d.,\-\/:\s(AM|PM)]+/g,' ').trim().slice(0,60)||'Unknown',
+        lat, lng,
+        speed: spdCand[0]||0,
+        heading: 0,
+        odometer: odoCand[0]||0,
+        engineHours: ehCand[0]||0
+      });
     });
   }
+  return {text:fullText.slice(0,10000), rows, meta};
+}
 
-  return { text: fullText, rows, meta };
+function parseIFTALine(line){
+  if(!line) return null;
+  // IFTA Movement Report: No  MM/DD/YYYY  HH:MM:SS AM/PM  Location  Lat  Lng  Speed  Heading  Odometer  EngHours
+  const m = line.match(/^(\d{1,6})\s+(\d{1,2}\/\d{1,2}\/\d{2,4})\s+(\d{1,2}:\d{2}:\d{2}\s*[AP]M)\s+(.+?)\s+(-?\d{1,3}\.\d{3,9})\s+(-?\d{1,3}\.\d{3,9})\s+(\d{1,3}\.?\d*)\s+(\d{1,3})\s+([\d,]+\.?\d*)\s+([\d,]+\.?\d*)\s*$/);
+  if(!m) return null;
+  return {
+    no:+m[1], datetime:`${m[2]} ${m[3]}`, date:m[2], time:m[3],
+    location:m[4].trim(), lat:+m[5], lng:+m[6],
+    speed:+m[7], heading:+m[8],
+    odometer:+m[9].replace(/,/g,''),
+    engineHours:+m[10].replace(/,/g,'')
+  };
 }
 function rText(f){return new Promise((r,j)=>{const rd=new FileReader();rd.onload=()=>r(rd.result);rd.onerror=j;rd.readAsText(f)})}
 function rBuf(f){return new Promise((r,j)=>{const rd=new FileReader();rd.onload=()=>r(rd.result);rd.onerror=j;rd.readAsArrayBuffer(f)})}
@@ -860,6 +862,7 @@ async function startAnalysis(){
   document.getElementById('results').style.display='none';
   const prog=document.getElementById('prog');prog.style.display='block';
   abtn.disabled=true;
+  try{
 
   const steps=t('steps');
   document.getElementById('psteps').innerHTML=steps.map((s,i)=>
@@ -903,7 +906,8 @@ async function startAnalysis(){
         if(m) p.rows.push({no:+m[1],datetime:`${m[2]} ${m[3]}`,date:m[2],time:m[3],location:m[4].trim(),lat:+m[5],lng:+m[6],speed:+m[7],heading:+m[8],odometer:+m[9].replace(/,/g,''),engineHours:+m[10].replace(/,/g,'')});
       });
       // Update status display
-      const el = document.getElementById('fst'+parsed.indexOf(p));
+      const pidx = parsed.findIndex(x=>x.name===p.name);
+      const el = document.getElementById('fst'+pidx);
       if(el){ el.className='fitem-st st-ok'; el.textContent=p.rows.length+' ROWS'; }
     }
   });
@@ -918,14 +922,24 @@ async function startAnalysis(){
 
   let deep='';
   try{
-    const resp=await fetch('/api/analyze',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({prompt})});
-    const d=await resp.json();
-    if(d.error)throw new Error(d.error);
-    deep=d.text||'';
+    // 30 second timeout to prevent indefinite hang
+    const controller = new AbortController();
+    const timer = setTimeout(()=>controller.abort(), 30000);
+    const resp = await fetch('/api/analyze',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({prompt}),
+      signal: controller.signal
+    });
+    clearTimeout(timer);
+    const d = await resp.json();
+    if(d.error) throw new Error(d.error);
+    deep = d.text||'';
   } catch(e){
-    deep=lang==='uz'
-      ?`[AI tahlili mavjud emas - lokal tahlil natijalari yuqorida]\n\nXato: ${e.message}\n\nLokal: ${eng.checks.length} tekshiruv, ${eng.violations.length} qoidabuzarlik, ball ${eng.score}/100`
-      :`[AI analysis unavailable - local results shown above]\n\nError: ${e.message}\n\nLocal engine: ${eng.checks.length} checks, ${eng.violations.length} violations, score ${eng.score}/100`;
+    const isTimeout = e.name==='AbortError';
+    deep = lang==='uz'
+      ? `[AI tahlili ${isTimeout?'vaqt tugadi':'mavjud emas'} — lokal 25-nuqtali natijalar yuqorida]\n\nXato: ${e.message}\n\nLokal tahlil: ${eng.checks.length} tekshiruv, ${eng.viols.length} qoidabuzarlik, ball: ${eng.score}/100`
+      : `[AI analysis ${isTimeout?'timed out':'unavailable'} — local 25-point results shown above]\n\nError: ${e.message}\n\nLocal engine completed: ${eng.checks.length} checks, ${eng.viols.length} violations, score: ${eng.score}/100`;
   }
 
   document.getElementById('ps13').className='pstep done';
@@ -940,6 +954,14 @@ async function startAnalysis(){
   AR={...eng,deep,parsed};
   renderResults(AR);
   abtn.disabled=false;
+  } catch(fatalErr){
+    prog.style.display='none';
+    abtn.disabled=false;
+    showToast('Error: '+fatalErr.message);
+    console.error('startAnalysis fatal:', fatalErr);
+    // Show partial results if engine ran
+    if(AR){ document.getElementById('results').style.display='block'; renderResults(AR); }
+  }
 }
 
 function buildSummary(parsed){
@@ -1173,7 +1195,7 @@ function checkGPS(rows,viols){
   if(!lc||!gc)return R;
   let teleports=0,drops=0,spdMis=0,spdTotal=0;
 
-  for(let i=1;i<Math.min(rows.length,2000);i++){
+  for(let i=1;i<Math.min(rows.length,5000);i++){
     const r1=rows[i-1],r2=rows[i];
     const la1=+r1[lc],lo1=+r1[gc],la2=+r2[lc],lo2=+r2[gc];
     if([la1,lo1,la2,lo2].some(isNaN))continue;
@@ -1379,6 +1401,7 @@ function checkXVal(parsed,ft,viols){
 
 // ── RENDER RESULTS ─────────────────────────────────────────
 function renderResults(data){
+  if(!data){console.error('renderResults: no data');return;}
   // Score circle
   const score=data.score;
   const scol=score>=85?'#22c55e':score>=70?'#f59e0b':score>=50?'#f97316':'#ef4444';
@@ -1462,7 +1485,7 @@ function renderResults(data){
   }).join('');
 
   // Charts
-  renderCharts(data);
+  try{ renderCharts(data); } catch(e){ console.warn('Chart render error:', e); }
 
   // HOS
   document.getElementById('hosgrd').innerHTML=(data.hosData||[]).slice(0,28).map(d=>`
