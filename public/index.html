@@ -842,7 +842,7 @@ function csvLine(l){
 }
 
 // ── COLUMN DETECTION ──────────────────────────────────────
-function col(obj,re){if(!obj)return null;return Object.keys(obj).find(k=>re.test(k))||null}
+function col(obj,re){if(!obj||typeof obj!=='object')return null;try{return Object.keys(obj).find(k=>re.test(k))||null}catch(e){return null}}
 
 // ── HAVERSINE ──────────────────────────────────────────────
 function hav(la1,lo1,la2,lo2){
@@ -977,7 +977,7 @@ function buildPrompt(summary,eng){
 
 25-point compliance engine results:
 - Score: ${eng.score}/100 | Pass probability: ${eng.passPct}
-- Verdict: ${eng.verdict} | Violations: ${eng.violations.length} | Checks passed: ${eng.passed}/25
+- Verdict: ${eng.verdict} | Violations: ${eng.viols.length} | Checks passed: ${eng.passed}/25
 - Critical: ${eng.bk.critical}, High: ${eng.bk.high}, Medium: ${eng.bk.medium}, Low: ${eng.bk.low}
 
 Metrics: GPS records=${eng.met.gps}, Speed issues=${eng.met.spd}, ODO gap=${eng.met.odoGap}mi, Missing days=${eng.met.missDays}
@@ -1092,14 +1092,25 @@ function runEngine(parsed){
     files:parsed.length,score,passed
   };
 
-  return{score,verdict,passPct,bk,sb,viols,checks,passed,hosData:hosResult.days,met,missing,ft:{hasELD,hasIFTA,hasFuel,hasBOL}};
+  return{
+    score, verdict, passPct,
+    bk:   bk   || {critical:0,high:0,medium:0,low:0},
+    sb:   sb   || [],
+    viols:viols|| [],
+    checks:checks||[],
+    passed: passed||0,
+    hosData: (hosResult&&hosResult.days)||[],
+    met:  met  || {totalV:0,gps:0,spd:0,odoGap:'0',missDays:0,files:0,score,passed:0},
+    missing: missing||[],
+    ft: {hasELD,hasIFTA,hasFuel,hasBOL}
+  };
 }
 
 // ── ODOMETER CHECK ─────────────────────────────────────────
 function checkOdometer(rows,viols){
   const R={mono:{s:'skip',d:'No odometer data'},jump:{s:'skip',d:'No odometer data'},ratio:{s:'skip',d:'No GPS data'},eh:{s:'skip',d:'No engine hours'},cont:{s:'skip',d:'Insufficient data'},odoGap:0};
   if(rows.length<2)return R;
-  const s=rows[0];
+  const s=rows[0]||{};
   const oc=col(s,/odo|odometer/i);
   const lc=col(s,/^lat|latitude/i);
   const gc=col(s,/^l[no]g?|longitude/i);
@@ -1149,7 +1160,7 @@ function checkOdometer(rows,viols){
   }
 
   if(ec&&oc&&R.odoGap>0){
-    const fEH=+String(rows[0][ec]).replace(/,/g,'')||0;
+    const fEH=rows[0]&&ec?+String((rows[0][ec]||'0')).replace(/,/g,'')||0:0;
     const lEH=+String(rows[rows.length-1][ec]).replace(/,/g,'')||0;
     const ehGap=lEH-fEH;
     if(ehGap>0){
@@ -1184,7 +1195,7 @@ function checkOdometer(rows,viols){
 function checkGPS(rows,viols){
   const R={spd:{s:'skip',d:'No GPS/speed data'},tele:{s:'skip',d:'No GPS data'},drop:{s:'skip',d:'No timestamps'},rev:{s:'skip',d:'No heading data'},addr:{s:'skip',d:'No address data'},spdIssues:0};
   if(rows.length<2)return R;
-  const s=rows[0];
+  const s=rows[0]||{};
   const lc=col(s,/^lat|latitude/i);
   const gc=col(s,/^l[no]g?|longitude/i);
   const sc=col(s,/^speed|mph/i);
@@ -1267,7 +1278,7 @@ function checkGPS(rows,viols){
 function checkHOS(rows,viols){
   const R={h11:{s:'skip',d:'No drive time data'},h14:{s:'skip',d:'No duty status'},h70:{s:'skip',d:'Insufficient days'},br30:{s:'skip',d:'No time data'},off10:{s:'skip',d:'No off-duty data'},re34:{s:'skip',d:'Insufficient data'},days:[],missDays:0};
   if(!rows.length)return R;
-  const s=rows[0];
+  const s=rows[0]||{};
   const dc=col(s,/datetime|date.?time|date|time/i);
   const sc=col(s,/^speed/i);
   if(!dc)return R;
@@ -1319,7 +1330,7 @@ function checkELD(parsed,viols){
 
   parsed.forEach(p=>{
     if(!p.rows.length)return;
-    const s=p.rows[0];
+    const s=p.rows[0]||{};
     const ce=col(s,/certif/i);
     const ed=col(s,/edit|modif/i);
     const ev=col(s,/event.?type|action/i);
@@ -1349,7 +1360,7 @@ function checkELD(parsed,viols){
   if(unid>0){
     R.unid={s:'fail',d:`${unid} unidentified driving record(s)`};
     viols.push({type:'Unidentified Driving',desc:`${unid} records show motion without driver ID assignment.`,loc:'ELD records',sec:'§395.32(a)',sev:'high',pts:8});
-  } else if(parsed.some(p=>col(p.rows[0],/driver/i))){
+  } else if(parsed.some(p=>p.rows.length>0&&col(p.rows[0]||{},/driver/i))){
     R.unid={s:'pass',d:'All driving assigned to identified driver'};
   }
 
@@ -1392,8 +1403,8 @@ function checkXVal(parsed,ft,viols){
   let hasDr=false,hasVeh=false;
   parsed.forEach(p=>{
     if(!p.rows[0])return;
-    if(col(p.rows[0],/driver|user/i))hasDr=true;
-    if(col(p.rows[0],/vehicle|unit|truck/i))hasVeh=true;
+    if(col(p.rows[0]||{},/driver|user/i))hasDr=true;
+    if(col(p.rows[0]||{},/vehicle|unit|truck/i))hasVeh=true;
   });
   if(hasDr&&hasVeh)R.dv={s:'pass',d:'Driver+vehicle assignment data present'};
   return R;
@@ -1402,6 +1413,20 @@ function checkXVal(parsed,ft,viols){
 // ── RENDER RESULTS ─────────────────────────────────────────
 function renderResults(data){
   if(!data){console.error('renderResults: no data');return;}
+  // Defensive defaults - prevent any .length on undefined
+  data.viols   = data.viols   || [];
+  data.checks  = data.checks  || [];
+  data.sb      = data.sb      || [];
+  data.missing = data.missing || [];
+  data.hosData = data.hosData || [];
+  data.bk      = data.bk      || {critical:0,high:0,medium:0,low:0};
+  data.met     = data.met     || {totalV:0,gps:0,spd:0,odoGap:'0',missDays:0,files:0,score:0,passed:0};
+  data.ft      = data.ft      || {};
+  data.score   = data.score   || 0;
+  data.passPct = data.passPct || '—';
+  data.verdict = data.verdict || 'warn';
+  data.passed  = data.passed  || 0;
+  data.deep    = data.deep    || '';
   // Score circle
   const score=data.score;
   const scol=score>=85?'#22c55e':score>=70?'#f59e0b':score>=50?'#f97316':'#ef4444';
