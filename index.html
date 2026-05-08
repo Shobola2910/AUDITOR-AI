@@ -1,0 +1,1095 @@
+<!DOCTYPE html>
+<html lang="uz">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FMCSA eRODS — Technical Safety Audit Tool</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300;0,9..144,400;0,9..144,500;0,9..144,700;1,9..144,400&family=Instrument+Serif:ital@0;1&family=JetBrains+Mono:wght@300;400;500;600&family=DM+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#0a0d14;
+  --bg-2:#0f131c;
+  --surface:#141923;
+  --surface-2:#1a2030;
+  --surface-3:#222a3a;
+  --line:#222a3a;
+  --line-2:#2c3447;
+  --ink:#e8e5dc;
+  --ink-dim:#9aa0ad;
+  --ink-faint:#5d6478;
+  --amber:#e8a23a;
+  --amber-soft:#c97e1e;
+  --rust:#c45032;
+  --crimson:#a83232;
+  --moss:#7a8a55;
+  --steel:#5a8baf;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{
+  background:var(--bg);
+  color:var(--ink);
+  font-family:'DM Sans',sans-serif;
+  font-weight:400;line-height:1.55;
+  overflow-x:hidden;position:relative;min-height:100vh;
+}
+body::before{
+  content:"";position:fixed;inset:0;
+  background-image:
+    linear-gradient(rgba(255,255,255,.018) 1px,transparent 1px),
+    linear-gradient(90deg,rgba(255,255,255,.018) 1px,transparent 1px);
+  background-size:64px 64px;pointer-events:none;z-index:0;
+}
+body::after{
+  content:"";position:fixed;inset:0;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2'/%3E%3C/filter%3E%3Crect width='200' height='200' filter='url(%23n)' opacity='0.5'/%3E%3C/svg%3E");
+  opacity:.035;pointer-events:none;z-index:1;mix-blend-mode:overlay;
+}
+.container{max-width:1280px;margin:0 auto;padding:0 32px;position:relative;z-index:2}
+::selection{background:var(--amber);color:var(--bg)}
+
+/* NAV */
+nav{position:sticky;top:0;z-index:50;background:rgba(10,13,20,.85);backdrop-filter:blur(18px);border-bottom:1px solid var(--line)}
+.nav-inner{max-width:1280px;margin:0 auto;padding:14px 32px;display:flex;align-items:center;justify-content:space-between;gap:24px}
+.brand{display:flex;align-items:center;gap:12px;font-family:'JetBrains Mono',monospace;font-size:13px;letter-spacing:.04em}
+.brand-mark{width:34px;height:34px;border:1px solid var(--amber);display:grid;place-items:center;font-family:'Fraunces',serif;font-weight:500;color:var(--amber);font-size:18px;position:relative}
+.brand-mark::before,.brand-mark::after{content:"";position:absolute;background:var(--amber)}
+.brand-mark::before{top:-3px;left:-3px;width:6px;height:1px}
+.brand-mark::after{top:-3px;left:-3px;width:1px;height:6px}
+.brand-text strong{color:var(--ink);font-weight:500}
+.brand-text span{color:var(--ink-faint);margin-left:6px}
+.nav-links{display:flex;gap:28px;font-family:'JetBrains Mono',monospace;font-size:12px;letter-spacing:.05em;text-transform:uppercase}
+.nav-links a{color:var(--ink-dim);text-decoration:none;transition:color .2s}
+.nav-links a:hover{color:var(--amber)}
+.nav-status{display:flex;align-items:center;gap:8px;font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--ink-faint)}
+.dot{width:7px;height:7px;border-radius:50%;background:var(--moss);box-shadow:0 0 12px var(--moss);animation:pulse 2s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+@media(max-width:900px){.nav-links{display:none}.nav-status{display:none}}
+
+/* HERO */
+.hero{padding:64px 0 32px;border-bottom:1px solid var(--line)}
+.hero-meta{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:48px;font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--ink-faint);letter-spacing:.08em;text-transform:uppercase}
+.hero-meta-block{display:flex;flex-direction:column;gap:4px}
+.hero-meta-block strong{color:var(--amber);font-weight:500}
+.hero h1{font-family:'Fraunces',serif;font-weight:300;font-size:clamp(40px,7vw,88px);line-height:.98;letter-spacing:-.03em;color:var(--ink);max-width:18ch}
+.hero h1 em{font-family:'Instrument Serif',serif;font-style:italic;color:var(--amber);font-weight:400}
+.hero-tag{margin-top:24px;font-family:'JetBrains Mono',monospace;font-size:13px;color:var(--ink-dim);letter-spacing:.03em;border-left:2px solid var(--amber);padding-left:16px;max-width:680px;line-height:1.7}
+
+/* UPLOAD */
+.upload-section{padding:48px 0 80px}
+.upload-wrap{display:grid;grid-template-columns:1.4fr 1fr;gap:24px;align-items:stretch}
+@media(max-width:900px){.upload-wrap{grid-template-columns:1fr}}
+.dropzone{background:var(--surface);border:1px dashed var(--line-2);padding:48px 40px;position:relative;cursor:pointer;transition:all .25s ease;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;min-height:340px}
+.dropzone:hover, .dropzone.drag{border-color:var(--amber);background:linear-gradient(135deg, rgba(232,162,58,.04), var(--surface));box-shadow:inset 0 0 0 1px rgba(232,162,58,.15)}
+.dz-icon{width:64px;height:64px;border:1px solid var(--amber);display:grid;place-items:center;color:var(--amber);margin-bottom:24px;position:relative;transition:transform .25s}
+.dropzone:hover .dz-icon{transform:translateY(-4px)}
+.dz-icon::before,.dz-icon::after{content:"";position:absolute;background:var(--amber)}
+.dz-icon::before{top:-4px;left:-4px;width:10px;height:1px}
+.dz-icon::after{top:-4px;left:-4px;width:1px;height:10px}
+.dz-title{font-family:'Fraunces',serif;font-weight:400;font-size:28px;line-height:1.15;letter-spacing:-.01em;margin-bottom:10px;color:var(--ink)}
+.dz-title em{font-family:'Instrument Serif',serif;font-style:italic;color:var(--amber)}
+.dz-sub{font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--ink-faint);letter-spacing:.06em;text-transform:uppercase;margin-bottom:24px}
+.dz-formats{display:flex;gap:6px;flex-wrap:wrap;justify-content:center}
+.fmt{font-family:'JetBrains Mono',monospace;font-size:10px;padding:5px 10px;border:1px solid var(--line-2);color:var(--ink-dim);letter-spacing:.08em}
+.fmt strong{color:var(--amber);font-weight:500}
+.file-info{margin-top:24px;background:var(--bg);border:1px solid var(--line-2);padding:16px 20px;width:100%;max-width:480px;display:none;align-items:center;gap:16px;font-family:'JetBrains Mono',monospace;font-size:12px}
+.file-info.show{display:flex}
+.file-info .ico{width:36px;height:36px;border:1px solid var(--amber);display:grid;place-items:center;color:var(--amber);flex-shrink:0;font-size:11px}
+.file-info .meta{flex:1;text-align:left;overflow:hidden}
+.file-info .meta strong{display:block;color:var(--ink);font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.file-info .meta span{color:var(--ink-faint);font-size:10px;letter-spacing:.06em;text-transform:uppercase}
+.file-info .clear{background:transparent;border:none;color:var(--ink-faint);cursor:pointer;font-family:inherit;font-size:14px;padding:4px 8px;transition:color .2s}
+.file-info .clear:hover{color:var(--rust)}
+.upload-side{background:var(--surface);border:1px solid var(--line);padding:32px;display:flex;flex-direction:column}
+.us-step{display:flex;gap:16px;align-items:flex-start;padding:16px 0;border-bottom:1px solid var(--line)}
+.us-step:last-of-type{border-bottom:none;padding-bottom:24px}
+.us-step .n{width:28px;height:28px;border:1px solid var(--amber);display:grid;place-items:center;flex-shrink:0;font-family:'Fraunces',serif;font-style:italic;color:var(--amber);font-size:14px}
+.us-step h5{font-family:'Fraunces',serif;font-weight:500;font-size:15px;margin-bottom:4px;color:var(--ink)}
+.us-step p{font-size:12px;color:var(--ink-dim);line-height:1.55}
+.btn{font-family:'JetBrains Mono',monospace;font-size:12px;letter-spacing:.1em;text-transform:uppercase;padding:14px 24px;border:none;cursor:pointer;transition:all .2s;display:inline-flex;align-items:center;justify-content:center;gap:8px;font-weight:500}
+.btn-primary{background:var(--amber);color:var(--bg);width:100%;margin-top:auto}
+.btn-primary:hover:not(:disabled){background:var(--ink);transform:translateY(-1px)}
+.btn-primary:disabled{opacity:.4;cursor:not-allowed}
+.demo-link{margin-top:14px;text-align:center;font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--ink-faint);letter-spacing:.05em}
+.demo-link a{color:var(--amber);text-decoration:none;border-bottom:1px dashed var(--amber-soft);padding-bottom:1px}
+.demo-link a:hover{color:var(--ink)}
+
+/* PROCESSING */
+.processing{display:none;padding:64px 0;background:var(--bg-2);border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
+.processing.show{display:block}
+.proc-head{text-align:center;margin-bottom:48px}
+.proc-head .eyebrow{font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--amber);letter-spacing:.12em;text-transform:uppercase;margin-bottom:12px}
+.proc-head h2{font-family:'Fraunces',serif;font-weight:300;font-size:42px;letter-spacing:-.02em}
+.proc-head h2 em{font-family:'Instrument Serif',serif;font-style:italic;color:var(--amber)}
+.proc-pipeline{max-width:760px;margin:0 auto;background:var(--surface);border:1px solid var(--line);font-family:'JetBrains Mono',monospace}
+.proc-step{display:flex;align-items:center;gap:16px;padding:16px 24px;border-bottom:1px solid var(--line);font-size:13px;color:var(--ink-faint);transition:color .3s}
+.proc-step:last-child{border-bottom:none}
+.proc-step .ind{width:14px;height:14px;border:1px solid var(--ink-faint);flex-shrink:0;position:relative;transition:all .3s}
+.proc-step.active{color:var(--amber)}
+.proc-step.active .ind{border-color:var(--amber);background:var(--amber)}
+.proc-step.active .ind::after{content:"";position:absolute;inset:-6px;border:1px solid var(--amber);animation:pulse-ring 1s infinite}
+@keyframes pulse-ring{0%{opacity:1;transform:scale(.8)}100%{opacity:0;transform:scale(1.4)}}
+.proc-step.done{color:var(--moss)}
+.proc-step.done .ind{border-color:var(--moss);background:var(--moss)}
+.proc-step .lbl{flex:1}
+.proc-step .time{font-size:11px;letter-spacing:.06em}
+.proc-bar{height:3px;background:var(--bg);overflow:hidden}
+.proc-bar .fill{height:100%;width:0%;background:linear-gradient(90deg, var(--amber-soft), var(--amber));transition:width .3s ease}
+
+/* RESULT */
+.result{display:none;padding:64px 0 0}
+.result.show{display:block;animation:fadeUp .8s ease}
+@keyframes fadeUp{from{opacity:0;transform:translateY(20px)}to{opacity:1;transform:none}}
+
+.report-card{background:linear-gradient(180deg, var(--surface) 0%, var(--bg-2) 100%);border:1px solid var(--line);padding:40px;position:relative;overflow:hidden}
+.report-card::before{content:"";position:absolute;top:0;left:0;width:120px;height:3px;background:var(--amber)}
+.report-meta{display:flex;justify-content:space-between;font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--ink-faint);letter-spacing:.06em;text-transform:uppercase;margin-bottom:32px;flex-wrap:wrap;gap:12px}
+.report-meta strong{color:var(--amber)}
+.report-card h2{font-family:'Fraunces',serif;font-weight:400;font-size:clamp(36px,5vw,56px);letter-spacing:-.025em;line-height:1.05;margin-bottom:8px}
+.report-card h2 em{font-family:'Instrument Serif',serif;font-style:italic;color:var(--amber)}
+.report-sub{font-family:'JetBrains Mono',monospace;font-size:13px;color:var(--ink-dim);margin-bottom:36px;letter-spacing:.02em}
+
+.report-grid{display:grid;grid-template-columns:280px 1fr 1fr;gap:32px;margin-top:36px;padding-top:36px;border-top:1px solid var(--line)}
+@media(max-width:980px){.report-grid{grid-template-columns:1fr;gap:24px}}
+
+.gauge-wrap{text-align:center}
+.gauge{position:relative;width:220px;height:220px;margin:0 auto}
+.gauge svg{transform:rotate(-90deg)}
+.gauge-track{fill:none;stroke:var(--line);stroke-width:14}
+.gauge-fill{fill:none;stroke:var(--rust);stroke-width:14;stroke-linecap:butt;stroke-dasharray:565;stroke-dashoffset:565;transition:stroke-dashoffset 1.5s ease-out}
+.gauge-center{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center}
+.gauge-num{font-family:'Fraunces',serif;font-weight:300;font-size:62px;line-height:1;letter-spacing:-.03em;color:var(--ink)}
+.gauge-num em{font-family:'Instrument Serif',serif;font-style:italic;color:var(--amber);font-size:34px;vertical-align:super;font-weight:400}
+.gauge-lbl{font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--ink-faint);letter-spacing:.1em;text-transform:uppercase;margin-top:6px}
+.gauge-verdict{margin-top:18px;font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--rust);letter-spacing:.1em;text-transform:uppercase;display:inline-flex;align-items:center;gap:8px;padding:6px 12px;border:1px solid var(--rust);background:rgba(196,80,50,.06)}
+
+.summary-stats{display:grid;grid-template-columns:repeat(2,1fr);gap:16px}
+.stat-card{background:var(--surface);border:1px solid var(--line);padding:20px}
+.stat-card .v{font-family:'Fraunces',serif;font-weight:400;font-size:34px;line-height:1;letter-spacing:-.02em;color:var(--ink);margin-bottom:6px}
+.stat-card .v em{font-family:'Instrument Serif',serif;font-style:italic;color:var(--amber);font-size:20px}
+.stat-card .l{font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--ink-faint);letter-spacing:.08em;text-transform:uppercase;line-height:1.4}
+.stat-card.crit{border-color:var(--rust)}
+.stat-card.crit .v{color:var(--rust)}
+.stat-card.med{border-color:var(--amber)}
+.stat-card.med .v{color:var(--amber)}
+
+.actions-stack{display:flex;flex-direction:column;gap:12px}
+.action-btn{display:flex;align-items:center;gap:14px;padding:18px 20px;background:var(--surface);border:1px solid var(--line);text-decoration:none;color:var(--ink);transition:all .2s;cursor:pointer}
+.action-btn:hover{border-color:var(--amber);background:var(--surface-2);transform:translateX(4px)}
+.action-btn .icon{width:36px;height:36px;border:1px solid var(--line-2);display:grid;place-items:center;color:var(--amber);flex-shrink:0}
+.action-btn:hover .icon{border-color:var(--amber)}
+.action-btn .t{flex:1}
+.action-btn .t strong{display:block;font-family:'Fraunces',serif;font-weight:500;font-size:15px}
+.action-btn .t span{font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--ink-faint);letter-spacing:.06em;text-transform:uppercase}
+
+/* TABS */
+.result-section{padding:64px 0}
+.tabs{display:flex;gap:0;border-bottom:1px solid var(--line);margin-bottom:32px;overflow-x:auto}
+.tab-btn{background:transparent;border:none;padding:16px 24px;font-family:'JetBrains Mono',monospace;font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-dim);cursor:pointer;position:relative;transition:color .2s;white-space:nowrap}
+.tab-btn:hover{color:var(--ink)}
+.tab-btn.active{color:var(--amber)}
+.tab-btn.active::after{content:"";position:absolute;bottom:-1px;left:0;right:0;height:2px;background:var(--amber)}
+.tab-pane{display:none}
+.tab-pane.active{display:block;animation:fadeUp .4s ease}
+
+/* VIOLATIONS */
+.viol-list{display:flex;flex-direction:column;gap:12px}
+.viol{background:var(--surface);border:1px solid var(--line);border-left:3px solid var(--amber);transition:all .25s;overflow:hidden}
+.viol[data-sev="crit"]{border-left-color:var(--rust)}
+.viol[data-sev="high"]{border-left-color:var(--amber-soft)}
+.viol[data-sev="med"]{border-left-color:var(--amber)}
+.viol-head{padding:20px 24px;cursor:pointer;display:grid;grid-template-columns:60px 1fr auto auto;gap:20px;align-items:center}
+.viol-head:hover{background:var(--surface-2)}
+.viol-num{font-family:'Fraunces',serif;font-style:italic;font-weight:300;font-size:34px;line-height:1;color:var(--amber)}
+.viol[data-sev="crit"] .viol-num{color:var(--rust)}
+.viol-title h4{font-family:'Fraunces',serif;font-weight:500;font-size:18px;margin-bottom:4px;line-height:1.25}
+.viol-title .cfr{font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--ink-faint);letter-spacing:.04em}
+.sev-badge{font-family:'JetBrains Mono',monospace;font-size:10px;padding:5px 10px;letter-spacing:.1em;text-transform:uppercase;display:inline-flex;align-items:center;gap:6px;white-space:nowrap}
+.sev-badge::before{content:"";width:6px;height:6px;border-radius:50%}
+.sev-crit{color:var(--rust);border:1px solid var(--rust);background:rgba(196,80,50,.06)}
+.sev-crit::before{background:var(--rust);box-shadow:0 0 8px var(--rust)}
+.sev-high{color:var(--amber-soft);border:1px solid var(--amber-soft);background:rgba(201,126,30,.06)}
+.sev-high::before{background:var(--amber-soft)}
+.sev-med{color:var(--amber);border:1px solid var(--amber);background:rgba(232,162,58,.06)}
+.sev-med::before{background:var(--amber)}
+.viol-toggle{width:28px;height:28px;border:1px solid var(--line-2);display:grid;place-items:center;color:var(--ink-dim);transition:all .2s;font-size:12px}
+.viol.open .viol-toggle{transform:rotate(45deg);border-color:var(--amber);color:var(--amber)}
+.viol-body{max-height:0;overflow:hidden;transition:max-height .35s ease;border-top:0 solid var(--line)}
+.viol.open .viol-body{max-height:1200px;border-top-width:1px}
+.viol-content{padding:24px;display:grid;grid-template-columns:1fr 1fr;gap:32px}
+@media(max-width:780px){.viol-content{grid-template-columns:1fr}.viol-head{grid-template-columns:50px 1fr auto;gap:14px}.viol-head .sev-badge{display:none}}
+.viol-content h5{font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--amber);letter-spacing:.1em;text-transform:uppercase;margin-bottom:10px}
+.viol-content p{font-size:14px;color:var(--ink-dim);line-height:1.7;margin-bottom:14px}
+.viol-content p strong{color:var(--ink);font-weight:500}
+.kv{font-family:'JetBrains Mono',monospace;font-size:12px;display:grid;grid-template-columns:140px 1fr;gap:8px 20px;border-top:1px solid var(--line);padding-top:14px;margin-top:14px}
+.kv dt{color:var(--ink-faint);letter-spacing:.04em}
+.kv dd{color:var(--ink)}
+.kv dd em{color:var(--rust);font-style:normal;font-weight:500}
+
+.mini-bars{margin-top:12px}
+.bar-row{display:grid;grid-template-columns:160px 1fr 60px;gap:12px;align-items:center;margin-bottom:8px;font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--ink-dim)}
+.bar-track{height:8px;background:var(--bg);border:1px solid var(--line);position:relative}
+.bar-fill{height:100%;background:var(--amber-soft)}
+.bar-fill.crit{background:var(--rust)}
+.bar-row .pct{text-align:right;color:var(--amber)}
+
+/* TECHNICAL */
+.tech-grid{display:grid;grid-template-columns:1fr 1fr;gap:24px}
+@media(max-width:900px){.tech-grid{grid-template-columns:1fr}}
+.tech-card{background:var(--surface);border:1px solid var(--line);padding:28px}
+.tech-card h3{font-family:'Fraunces',serif;font-weight:500;font-size:20px;margin-bottom:6px}
+.tech-card .sub{font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--amber);letter-spacing:.06em;margin-bottom:18px}
+.metric-row{display:flex;justify-content:space-between;padding:12px 0;border-bottom:1px solid var(--line);font-family:'JetBrains Mono',monospace;font-size:13px}
+.metric-row:last-child{border-bottom:none}
+.metric-row .k{color:var(--ink-dim)}
+.metric-row .v{color:var(--ink);font-weight:500}
+.metric-row .v.flag{color:var(--rust)}
+.metric-row .v.warn{color:var(--amber)}
+.metric-row .v.ok{color:var(--moss)}
+
+.hos-table{width:100%;border-collapse:collapse;font-size:13px;margin-top:8px}
+.hos-table th, .hos-table td{padding:12px 14px;text-align:left;border-bottom:1px solid var(--line)}
+.hos-table th{font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--amber);letter-spacing:.08em;text-transform:uppercase;font-weight:500;background:var(--bg-2)}
+.hos-table td{font-family:'JetBrains Mono',monospace;color:var(--ink-dim)}
+.chk{display:inline-block;width:18px;height:18px;text-align:center;line-height:18px;font-size:11px}
+.chk.ok{color:var(--moss)}
+.chk.warn{color:var(--amber)}
+.chk.bad{color:var(--rust)}
+
+.meta-compare{display:grid;grid-template-columns:1fr 80px 1fr;gap:0;margin-top:14px;border:1px solid var(--line);background:var(--bg-2)}
+.meta-compare > div{padding:18px}
+.meta-compare .col h6{font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--ink-faint);letter-spacing:.08em;text-transform:uppercase;margin-bottom:8px}
+.meta-compare .col .val{font-family:'Fraunces',serif;font-size:22px;font-weight:400;color:var(--ink);margin-bottom:4px}
+.meta-compare .col small{font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--ink-dim);letter-spacing:.04em}
+.meta-compare .gap{display:grid;place-items:center;border-left:1px dashed var(--line);border-right:1px dashed var(--line);background:var(--surface);font-family:'Fraunces',serif;font-style:italic;color:var(--rust);font-size:18px;font-weight:500}
+
+/* RECOMMENDATIONS */
+.rec-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:20px}
+@media(max-width:980px){.rec-grid{grid-template-columns:1fr}}
+.rec-col{background:var(--surface);border:1px solid var(--line);padding:28px;display:flex;flex-direction:column;border-top:3px solid}
+.rec-col[data-priority="now"]{border-top-color:var(--rust)}
+.rec-col[data-priority="soon"]{border-top-color:var(--amber)}
+.rec-col[data-priority="long"]{border-top-color:var(--moss)}
+.rec-col h4{font-family:'Fraunces',serif;font-weight:500;font-size:22px;margin-bottom:4px;line-height:1.15}
+.rec-col h4 em{font-family:'Instrument Serif',serif;font-style:italic;color:var(--amber)}
+.rec-col .priority{font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:.1em;text-transform:uppercase;margin-bottom:24px}
+.rec-col[data-priority="now"] .priority{color:var(--rust)}
+.rec-col[data-priority="soon"] .priority{color:var(--amber)}
+.rec-col[data-priority="long"] .priority{color:var(--moss)}
+.rec-col ul{list-style:none;display:flex;flex-direction:column;gap:14px}
+.rec-col li{display:flex;gap:12px;font-size:14px;color:var(--ink-dim);line-height:1.6;padding-left:0}
+.rec-col li .num{font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--amber);min-width:24px;font-weight:500;letter-spacing:.04em}
+.rec-col li strong{color:var(--ink);font-weight:500;display:block;margin-bottom:2px}
+
+.disclaimer{margin-top:48px;padding:24px;background:var(--bg-2);border:1px solid var(--line);border-left:3px solid var(--amber)}
+.disclaimer p{font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--ink-dim);line-height:1.7;letter-spacing:.02em}
+.disclaimer p strong{color:var(--amber)}
+
+/* REFERENCE */
+.ref-section{padding:96px 0;border-top:1px solid var(--line);background:var(--bg-2)}
+.sec-head{margin-bottom:48px;display:grid;grid-template-columns:80px 1fr;gap:24px;align-items:start}
+.sec-num{font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--amber);letter-spacing:.1em;border-top:1px solid var(--amber);padding-top:8px}
+.sec-eyebrow{font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--ink-faint);letter-spacing:.12em;text-transform:uppercase;margin-bottom:12px}
+.sec-title{font-family:'Fraunces',serif;font-weight:300;font-size:clamp(28px,4vw,44px);line-height:1.05;letter-spacing:-.02em;max-width:24ch}
+.sec-title em{font-family:'Instrument Serif',serif;font-style:italic;color:var(--amber);font-weight:400}
+.sec-lead{margin-top:14px;max-width:640px;color:var(--ink-dim);font-size:15px;line-height:1.7}
+
+.hos-grid{display:grid;grid-template-columns:repeat(4,1fr);border:1px solid var(--line)}
+.hos-card{padding:32px 24px;border-right:1px solid var(--line);background:var(--surface);position:relative;overflow:hidden}
+.hos-card:last-child{border-right:none}
+.hos-card::before{content:"";position:absolute;top:0;left:0;width:40%;height:2px;background:var(--amber)}
+.hos-card .hours{font-family:'Fraunces',serif;font-weight:300;font-size:72px;line-height:.9;letter-spacing:-.04em;margin-bottom:6px}
+.hos-card .hours em{font-family:'Instrument Serif',serif;font-style:italic;color:var(--amber);font-size:36px;vertical-align:super;font-weight:400}
+.hos-card .label{font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--amber);letter-spacing:.1em;text-transform:uppercase;margin-bottom:12px}
+.hos-card p{color:var(--ink-dim);font-size:13px;line-height:1.6}
+@media(max-width:980px){.hos-grid{grid-template-columns:repeat(2,1fr)}.hos-card:nth-child(2){border-right:none}}
+@media(max-width:560px){.hos-grid{grid-template-columns:1fr}.hos-card{border-right:none;border-bottom:1px solid var(--line)}.hos-card:last-child{border-bottom:none}}
+
+.flags-row{display:grid;grid-template-columns:repeat(5,1fr);gap:16px;margin-top:16px}
+@media(max-width:980px){.flags-row{grid-template-columns:repeat(2,1fr)}}
+@media(max-width:560px){.flags-row{grid-template-columns:1fr}}
+.flag-mini{background:var(--surface);border:1px solid var(--line);padding:24px;transition:all .25s}
+.flag-mini:hover{border-color:var(--amber);transform:translateY(-2px)}
+.flag-mini .num{font-family:'Fraunces',serif;font-style:italic;font-weight:300;font-size:36px;color:var(--amber);line-height:1;margin-bottom:14px}
+.flag-mini h5{font-family:'Fraunces',serif;font-weight:500;font-size:16px;margin-bottom:8px;line-height:1.2}
+.flag-mini .cfr{font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--ink-faint);letter-spacing:.04em;display:block;margin-bottom:12px}
+.flag-mini p{font-size:12px;color:var(--ink-dim);line-height:1.55}
+
+/* FOOTER */
+footer{background:var(--bg-2);border-top:1px solid var(--line);padding:64px 0 32px;margin-top:0}
+.footer-grid{display:grid;grid-template-columns:2fr 1fr 1fr 1fr;gap:48px;margin-bottom:48px}
+.footer-grid h6{font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--amber);letter-spacing:.12em;text-transform:uppercase;margin-bottom:18px}
+.footer-grid p,.footer-grid li{font-size:13px;color:var(--ink-dim);line-height:1.7;list-style:none}
+.footer-grid li a{color:var(--ink-dim);text-decoration:none;transition:color .2s}
+.footer-grid li a:hover{color:var(--amber)}
+.footer-brand{font-family:'Fraunces',serif;font-size:32px;font-weight:300;letter-spacing:-.02em;margin-bottom:12px;line-height:1.1}
+.footer-brand em{font-family:'Instrument Serif',serif;font-style:italic;color:var(--amber)}
+.footer-bottom{border-top:1px solid var(--line);padding-top:24px;display:flex;justify-content:space-between;font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--ink-faint);letter-spacing:.06em;flex-wrap:wrap;gap:12px}
+@media(max-width:780px){.footer-grid{grid-template-columns:1fr 1fr;gap:32px}}
+@media(max-width:520px){.footer-grid{grid-template-columns:1fr}}
+
+input[type=file]{display:none}
+</style>
+</head>
+<body>
+
+<nav>
+  <div class="nav-inner">
+    <div class="brand">
+      <div class="brand-mark">e</div>
+      <div class="brand-text"><strong>eRODS</strong><span>/audit-tool</span></div>
+    </div>
+    <div class="nav-links">
+      <a href="#upload">Upload</a>
+      <a href="#flags-ref">Red Flags</a>
+      <a href="#hos-ref">HOS Rules</a>
+      <a href="#about">About</a>
+    </div>
+    <div class="nav-status">
+      <span class="dot"></span>
+      <span>49 CFR PART 395 / ACTIVE</span>
+    </div>
+  </div>
+</nav>
+
+<header class="hero">
+  <div class="container">
+    <div class="hero-meta">
+      <div class="hero-meta-block">
+        <span>FILE — 001 / TOOL</span>
+        <span><strong>FMCSA / TECH-SAFETY-AUDIT</strong></span>
+      </div>
+      <div class="hero-meta-block" style="text-align:right">
+        <span>BUILT FOR — eRODS DATA ANALYSIS</span>
+        <span><strong>VERSION 2026.05</strong></span>
+      </div>
+    </div>
+    <h1>Upload <em>your</em> ELD<br>logs. We find<br>what's hidden.</h1>
+    <p class="hero-tag">
+      ELD log fayllari, IFTA Movement Reports yoki GPS pings ni yuklang. Tizim 49 CFR Part 395 qoidalari va eRODS algoritmlari asosida odometer farqlari, GPS teleportation, ELD speed manipulation va HOS buzilishlarini avtomatik aniqlaydi.
+    </p>
+  </div>
+</header>
+
+<section class="upload-section" id="upload">
+  <div class="container">
+    <div class="upload-wrap">
+      <div>
+        <div class="dropzone" id="dropzone">
+          <div class="dz-icon">
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4">
+              <path d="M12 3v14M5 10l7-7 7 7M3 21h18"/>
+            </svg>
+          </div>
+          <div class="dz-title">Faylni shu yerga <em>tashlang</em></div>
+          <div class="dz-sub">Yoki tanlash uchun bosing</div>
+          <div class="dz-formats">
+            <span class="fmt"><strong>PDF</strong> · ELD Report</span>
+            <span class="fmt"><strong>CSV</strong> · GPS Pings</span>
+            <span class="fmt"><strong>XLSX</strong> · IFTA Movement</span>
+            <span class="fmt"><strong>LDIF</strong> · Native ELD</span>
+          </div>
+          <input type="file" id="fileInput" accept=".pdf,.csv,.xlsx,.xls,.ldif,.txt">
+          <div class="file-info" id="fileInfo">
+            <div class="ico">FILE</div>
+            <div class="meta">
+              <strong id="fileName">—</strong>
+              <span id="fileSize">—</span>
+            </div>
+            <button class="clear" id="clearFile" title="Olib tashlash">✕</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="upload-side">
+        <div class="us-step">
+          <div class="n">1</div>
+          <div>
+            <h5>Faylni yuklang</h5>
+            <p>ELD eksporti, GPS pinglar yoki IFTA movement report.</p>
+          </div>
+        </div>
+        <div class="us-step">
+          <div class="n">2</div>
+          <div>
+            <h5>Avtomatik tahlil</h5>
+            <p>49 CFR § 395 algoritmlari fayl ustida ishlaydi.</p>
+          </div>
+        </div>
+        <div class="us-step">
+          <div class="n">3</div>
+          <div>
+            <h5>Auditni qabul qiling</h5>
+            <p>Red flags, severity rating va tuzatish tavsiyalari.</p>
+          </div>
+        </div>
+        <button class="btn btn-primary" id="analyzeBtn" disabled>
+          <span>Tahlilni boshlash</span>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M13 5l7 7-7 7"/></svg>
+        </button>
+        <div class="demo-link">
+          Faylsiz sinab ko'rish? <a href="#" id="demoLink">Demo ma'lumotlardan foydalaning →</a>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="processing" id="processing">
+  <div class="container">
+    <div class="proc-head">
+      <div class="eyebrow">▸ Live Audit Pipeline</div>
+      <h2>Ma'lumotlar <em>tahlil</em> qilinmoqda…</h2>
+    </div>
+    <div class="proc-pipeline">
+      <div class="proc-step" data-step="1"><div class="ind"></div><div class="lbl">ELD yozuvlarini parse qilish</div><div class="time">—</div></div>
+      <div class="proc-step" data-step="2"><div class="ind"></div><div class="lbl">GPS koordinatalarini tekshirish (Haversine)</div><div class="time">—</div></div>
+      <div class="proc-step" data-step="3"><div class="ind"></div><div class="lbl">Odometer farqlarini hisoblash</div><div class="time">—</div></div>
+      <div class="proc-step" data-step="4"><div class="ind"></div><div class="lbl">ELD vs GPS tezliklarini taqqoslash</div><div class="time">—</div></div>
+      <div class="proc-step" data-step="5"><div class="ind"></div><div class="lbl">HOS muvofiqligini hisoblash (11/14/30/70)</div><div class="time">—</div></div>
+      <div class="proc-step" data-step="6"><div class="ind"></div><div class="lbl">Supporting documents bilan korrelyatsiya</div><div class="time">—</div></div>
+      <div class="proc-step" data-step="7"><div class="ind"></div><div class="lbl">PDF metadata tahlili</div><div class="time">—</div></div>
+      <div class="proc-step" data-step="8"><div class="ind"></div><div class="lbl">Audit hisobotini yaratish</div><div class="time">—</div></div>
+      <div class="proc-bar"><div class="fill" id="procFill"></div></div>
+    </div>
+  </div>
+</section>
+
+<section class="result" id="result">
+  <div class="container">
+
+    <div class="report-card">
+      <div class="report-meta">
+        <span>REPORT — <strong>FMCSA-eRODS / 2026-05-08</strong></span>
+        <span>OPERATOR: <strong>DF Trucking And Maintenance</strong></span>
+        <span>VEHICLE: <strong>122 / VIN 1XKYD49X6JJ208477</strong></span>
+      </div>
+      <h2>Audit topgan narsalar — <em>jiddiy</em>.</h2>
+      <p class="report-sub">Hisobot davri: 01/01/2026 → 02/01/2026 · Tahlil qilingan: 999 GPS ping, 890 PDF bet · Tahlil sanasi: 2026-05-08</p>
+
+      <div class="report-grid">
+        <div class="gauge-wrap">
+          <div class="gauge">
+            <svg width="220" height="220" viewBox="0 0 220 220">
+              <circle class="gauge-track" cx="110" cy="110" r="90"/>
+              <circle class="gauge-fill" id="gaugeFill" cx="110" cy="110" r="90"/>
+            </svg>
+            <div class="gauge-center">
+              <div class="gauge-num" id="gaugeNum">25<em>%</em></div>
+              <div class="gauge-lbl">Pass Probability</div>
+            </div>
+          </div>
+          <div class="gauge-verdict">● Yuqori xavf · audit shubhali</div>
+        </div>
+
+        <div class="summary-stats">
+          <div class="stat-card crit">
+            <div class="v">3</div>
+            <div class="l">Kritikal & Yuqori<br>Qoidabuzarliklar</div>
+          </div>
+          <div class="stat-card med">
+            <div class="v">2</div>
+            <div class="l">O'rta darajadagi<br>Anomaliyalar</div>
+          </div>
+          <div class="stat-card">
+            <div class="v">77<em>.6%</em></div>
+            <div class="l">GPS-ELD<br>Tezlik Farqi</div>
+          </div>
+          <div class="stat-card">
+            <div class="v">28<em>d</em></div>
+            <div class="l">Yo'q ma'lumot<br>(Jan 3 → Feb 1)</div>
+          </div>
+        </div>
+
+        <div class="actions-stack">
+          <a class="action-btn" onclick="window.print()">
+            <div class="icon">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M6 9V2h12v7M6 18H4a2 2 0 01-2-2v-5a2 2 0 012-2h16a2 2 0 012 2v5a2 2 0 01-2 2h-2M6 14h12v8H6z"/></svg>
+            </div>
+            <div class="t"><strong>Hisobotni Chop Etish</strong><span>PDF Export · A4</span></div>
+          </a>
+          <a class="action-btn" href="#upload">
+            <div class="icon">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 12a9 9 0 0118 0M3 12l3-3M3 12l3 3"/><path d="M21 12a9 9 0 01-18 0M21 12l-3 3M21 12l-3-3"/></svg>
+            </div>
+            <div class="t"><strong>Yangi Audit</strong><span>Boshqa fayl yuklash</span></div>
+          </a>
+          <a class="action-btn" href="#violations-tab">
+            <div class="icon">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6M16 13H8M16 17H8M10 9H8"/></svg>
+            </div>
+            <div class="t"><strong>Texnik Tafsilotlar</strong><span>Deep dive · 6 violation</span></div>
+          </a>
+        </div>
+      </div>
+    </div>
+
+    <div class="result-section" id="violations-tab">
+      <div class="tabs" role="tablist">
+        <button class="tab-btn active" data-tab="viol">🚩 Qoidabuzarliklar (6)</button>
+        <button class="tab-btn" data-tab="tech">🔍 Texnik Tahlil</button>
+        <button class="tab-btn" data-tab="rec">📝 Tavsiyalar</button>
+      </div>
+
+      <div class="tab-pane active" data-pane="viol">
+        <div class="viol-list">
+
+          <div class="viol" data-sev="crit">
+            <div class="viol-head">
+              <div class="viol-num">01</div>
+              <div class="viol-title">
+                <h4>Ma'lumot taqchilligi — 28 kunlik gap</h4>
+                <span class="cfr">49 CFR § 395.8(k) · Records of Duty Status retention</span>
+              </div>
+              <span class="sev-badge sev-crit">Kritikal</span>
+              <div class="viol-toggle">+</div>
+            </div>
+            <div class="viol-body"><div class="viol-content">
+              <div>
+                <h5>Topilma</h5>
+                <p>Hisobot sarlavhasi <strong>01/01/2026 → 02/01/2026</strong> davrini bildiradi (to'liq oy). Ammo taqdim etilgan ma'lumot faqat <strong>3 kunni</strong> qamrab oladi: Jan 1 (13:13 UTC) → Jan 3 (01:01 UTC). Qolgan <strong>28 kun butunlay yo'q</strong>.</p>
+                <p>49 CFR § 395.8(k) ga ko'ra, RODS yozuvlari kamida <strong>6 oy</strong> saqlanishi va so'ralganda ko'rsatilishi shart. Faqat 3 kunni topshirish — yashirish yoki yo'qotish belgisi.</p>
+              </div>
+              <div>
+                <h5>Texnik Belgilar</h5>
+                <dl class="kv">
+                  <dt>Kutilgan davr</dt><dd>32 kun (Jan 1 – Feb 1)</dd>
+                  <dt>Mavjud davr</dt><dd>2.5 kun</dd>
+                  <dt>Yo'q ma'lumot</dt><dd><em>29.5 kun (92.2%)</em></dd>
+                  <dt>Birinchi ping</dt><dd>2026-01-01 13:13:04 UTC</dd>
+                  <dt>Oxirgi ping</dt><dd>2026-01-03 01:01:18 UTC</dd>
+                  <dt>Audit hukmi</dt><dd><em>FAILURE TO RETAIN</em></dd>
+                </dl>
+              </div>
+            </div></div>
+          </div>
+
+          <div class="viol" data-sev="crit">
+            <div class="viol-head">
+              <div class="viol-num">02</div>
+              <div class="viol-title">
+                <h4>ELD tezlik soxtalashtirish — 77.6% holatda</h4>
+                <span class="cfr">49 CFR § 395.22(b)(4) · Accurate recording of speed</span>
+              </div>
+              <span class="sev-badge sev-crit">Kritikal</span>
+              <div class="viol-toggle">+</div>
+            </div>
+            <div class="viol-body"><div class="viol-content">
+              <div>
+                <h5>Topilma</h5>
+                <p>Har bir 1 daqiqalik intervaldagi GPS-hisoblangan tezlik ELD-ko'rsatilgan tezlikdan <strong>20–31 mph yuqori</strong> bo'lib chiqdi. Bu <strong>761 ta hodisada</strong> takrorlandi — barcha harakatlanish yozuvlarining <strong>77.6%</strong>.</p>
+                <p>Eng yuqori farq: <strong>Sango, TN yaqinida</strong>, GPS = 74 mph, ELD = 43 mph. Bu tasodifiy emas — <em>tizimli kamaytirilish</em> belgisi, ehtimol speeding violation larini yashirish maqsadida.</p>
+                <div class="mini-bars">
+                  <div class="bar-row"><span>20–30 mph past</span><div class="bar-track"><div class="bar-fill crit" style="width:97.7%"></div></div><span class="pct">97.7%</span></div>
+                  <div class="bar-row"><span>30–40 mph past</span><div class="bar-track"><div class="bar-fill" style="width:0.3%"></div></div><span class="pct">0.3%</span></div>
+                </div>
+              </div>
+              <div>
+                <h5>Aniqlangan Davlatlar</h5>
+                <dl class="kv">
+                  <dt>Holatlar soni</dt><dd>761 / 999 (77.6%)</dd>
+                  <dt>O'rtacha farq</dt><dd>22.4 mph past</dd>
+                  <dt>Maksimal farq</dt><dd><em>31 mph (Sango, TN)</em></dd>
+                  <dt>Davlatlar</dt><dd>IL, KY, TN, GA</dd>
+                  <dt>Pattern</dt><dd><em>SYSTEMATIC</em></dd>
+                  <dt>Probable cause</dt><dd>ELD speed sensor manipulation</dd>
+                </dl>
+              </div>
+            </div></div>
+          </div>
+
+          <div class="viol" data-sev="high">
+            <div class="viol-head">
+              <div class="viol-num">03</div>
+              <div class="viol-title">
+                <h4>Odometer vs GPS nomuvofiqlik — −345.8 mil</h4>
+                <span class="cfr">49 CFR § 395.26(h) · Odometer recording accuracy</span>
+              </div>
+              <span class="sev-badge sev-high">Yuqori</span>
+              <div class="viol-toggle">+</div>
+            </div>
+            <div class="viol-body"><div class="viol-content">
+              <div>
+                <h5>Topilma</h5>
+                <p>GPS to'g'ri chiziq masofasi (Haversine) <strong>941.7 mil</strong>, lekin odometer faqat <strong>595.9 mil</strong> ko'rsatdi. Farq <strong>−345.8 mil</strong> (ODO/GPS = 0.667).</p>
+                <p>Mantiq jihatdan: yo'l masofasi har doim to'g'ri chiziq masofasidan <strong>kattaroq</strong> bo'ladi (yo'llar egri). ODO ≥ GPS bo'lishi shart. Bu yerda ODO <em>kichikroq</em> — bu <strong>odometer rollback</strong> yoki kalibratsiya muammosini bildiradi.</p>
+              </div>
+              <div>
+                <h5>Hisoblash</h5>
+                <dl class="kv">
+                  <dt>GPS masofa</dt><dd>941.7 mil</dd>
+                  <dt>Odometer</dt><dd>595.9 mil</dd>
+                  <dt>Farq</dt><dd><em>−345.8 mil</em></dd>
+                  <dt>Nisbat</dt><dd><em>0.667 (norm: ≥1.0)</em></dd>
+                  <dt>Kutilgan minimum</dt><dd>~990 mil (yo'l multiplier)</dd>
+                  <dt>Rollback shubhasi</dt><dd><em>Yes — texnik audit kerak</em></dd>
+                </dl>
+              </div>
+            </div></div>
+          </div>
+
+          <div class="viol" data-sev="med">
+            <div class="viol-head">
+              <div class="viol-num">04</div>
+              <div class="viol-title">
+                <h4>30-daqiqalik tanaffus tasdiqlanmagan</h4>
+                <span class="cfr">49 CFR § 395.3(a)(3)(ii) · 30-minute break</span>
+              </div>
+              <span class="sev-badge sev-med">O'rta</span>
+              <div class="viol-toggle">+</div>
+            </div>
+            <div class="viol-body"><div class="viol-content">
+              <div>
+                <h5>Topilma</h5>
+                <p>Jan 1 kuni <strong>6.95 soat</strong> haydash qayd etilgan. GPS pinglar uzilishi asosida <strong>62 daqiqalik to'xtash</strong> aniqlandi (Hillsboro, TN yaqinida, 16:33–17:35 UTC).</p>
+                <p>Lekin ELD RODS da bu to'xtalish <strong>On-Duty</strong> yoki <strong>Off-Duty</strong> sifatida qayd etilganmi — hujjatlanmagan. 30-daqiqa qoidasi tasdig'i uchun bu kritik ma'lumot.</p>
+              </div>
+              <div>
+                <h5>Joylashuv & Vaqt</h5>
+                <dl class="kv">
+                  <dt>Sana</dt><dd>2026-01-01</dd>
+                  <dt>Joylashuv</dt><dd>Hillsboro, TN</dd>
+                  <dt>To'xtash boshi</dt><dd>16:33 UTC</dd>
+                  <dt>To'xtash oxiri</dt><dd>17:35 UTC</dd>
+                  <dt>Davomiyligi</dt><dd>62 daqiqa</dd>
+                  <dt>Status</dt><dd><em>Hujjatlanmagan</em></dd>
+                </dl>
+              </div>
+            </div></div>
+          </div>
+
+          <div class="viol" data-sev="med">
+            <div class="viol-head">
+              <div class="viol-num">05</div>
+              <div class="viol-title">
+                <h4>Noma'lum 14-soatlik gap — Coxs Crossing, GA</h4>
+                <span class="cfr">49 CFR § 395.8(a)(1) · Duty status documentation</span>
+              </div>
+              <span class="sev-badge sev-med">O'rta</span>
+              <div class="viol-toggle">+</div>
+            </div>
+            <div class="viol-body"><div class="viol-content">
+              <div>
+                <h5>Topilma</h5>
+                <p>Coxs Crossing, GA da <strong>14.07 soat</strong> to'xtalish aniqlandi. Bu davr ichida transport vositasi GPS bo'yicha <strong>+0.6 mil</strong> harakat qilgan (deyarli stationary).</p>
+                <p>Lekin ELD log-da bu davrda haydovchining duty status (On-Duty / Off-Duty / Sleeper Berth) <strong>hujjatlanmagan</strong>. 14 soatlik gap uchun status majburiy.</p>
+              </div>
+              <div>
+                <h5>Joylashuv & Vaqt</h5>
+                <dl class="kv">
+                  <dt>Joylashuv</dt><dd>Coxs Crossing, GA</dd>
+                  <dt>Boshi</dt><dd>21:31 UTC (Jan 1)</dd>
+                  <dt>Oxiri</dt><dd>11:35 UTC (Jan 2)</dd>
+                  <dt>Davomiyligi</dt><dd>14.07 soat</dd>
+                  <dt>GPS harakati</dt><dd>+0.6 mil (stationary)</dd>
+                  <dt>RODS status</dt><dd><em>Hujjatlanmagan</em></dd>
+                </dl>
+              </div>
+            </div></div>
+          </div>
+
+          <div class="viol" data-sev="high">
+            <div class="viol-head">
+              <div class="viol-num">06</div>
+              <div class="viol-title">
+                <h4>PDF metadata — retroaktiv yaratilish</h4>
+                <span class="cfr">49 CFR § 395.8(e)(1) · Real-time certification</span>
+              </div>
+              <span class="sev-badge sev-high">Yuqori</span>
+              <div class="viol-toggle">+</div>
+            </div>
+            <div class="viol-body"><div class="viol-content">
+              <div>
+                <h5>Topilma</h5>
+                <p>Hisobot davri <strong>01/01/2026 – 02/01/2026</strong> bo'lsada, PDF metadata ga ko'ra fayl <strong>30.04.2026</strong> sanasida yaratilgan — yanvar davridan <strong>3 oy 29 kun keyin</strong>.</p>
+                <p>49 CFR § 395.8(e)(1) talabiga ko'ra RODS yozuvlari <strong>real vaqtda sertifikatlanishi</strong> shart. Retroaktiv PDF — soxtalashtirish yoki tuzatish belgisi.</p>
+                <div class="meta-compare">
+                  <div class="col">
+                    <h6>Hisobot Davri</h6>
+                    <div class="val">01.01.2026</div>
+                    <small>– 02.01.2026 (Jan)</small>
+                  </div>
+                  <div class="gap">≠</div>
+                  <div class="col">
+                    <h6>PDF Yaratilgan</h6>
+                    <div class="val">30.04.2026</div>
+                    <small>(3 oy 29 kun keyin)</small>
+                  </div>
+                </div>
+              </div>
+              <div>
+                <h5>Texnik Belgilar</h5>
+                <dl class="kv">
+                  <dt>Producer</dt><dd>iText 7 / non-ELD origin</dd>
+                  <dt>Created</dt><dd>2026-04-30 14:22:08</dd>
+                  <dt>Modified</dt><dd>2026-04-30 14:22:08</dd>
+                  <dt>Real-time gap</dt><dd><em>119 kun</em></dd>
+                  <dt>Certification</dt><dd><em>Late / suspect</em></dd>
+                  <dt>Tavsiya</dt><dd>ELD provider native export</dd>
+                </dl>
+              </div>
+            </div></div>
+          </div>
+
+        </div>
+      </div>
+
+      <div class="tab-pane" data-pane="tech">
+        <div class="tech-grid">
+          <div class="tech-card">
+            <h3>Log Integrity Analysis</h3>
+            <div class="sub">// Edit pattern · Annotations · Certification</div>
+            <div class="metric-row"><span class="k">Total records</span><span class="v">999 GPS pings</span></div>
+            <div class="metric-row"><span class="k">Coverage period</span><span class="v warn">2.5 / 32 kun</span></div>
+            <div class="metric-row"><span class="k">Time-zone consistency</span><span class="v ok">UTC stable</span></div>
+            <div class="metric-row"><span class="k">Uncertified edits</span><span class="v">— (data unavailable)</span></div>
+            <div class="metric-row"><span class="k">PDF certification gap</span><span class="v flag">119 kun</span></div>
+            <div class="metric-row"><span class="k">Retroactive flag</span><span class="v flag">YES</span></div>
+          </div>
+
+          <div class="tech-card">
+            <h3>Speed & Distance Logic</h3>
+            <div class="sub">// GPS Haversine vs ELD-reported</div>
+            <div class="metric-row"><span class="k">GPS straight-line</span><span class="v">941.7 mil</span></div>
+            <div class="metric-row"><span class="k">Odometer</span><span class="v">595.9 mil</span></div>
+            <div class="metric-row"><span class="k">ODO/GPS ratio</span><span class="v flag">0.667 (norm ≥ 1.0)</span></div>
+            <div class="metric-row"><span class="k">Speed deviation cases</span><span class="v flag">761 / 999 (77.6%)</span></div>
+            <div class="metric-row"><span class="k">Avg deviation</span><span class="v warn">22.4 mph past</span></div>
+            <div class="metric-row"><span class="k">Max deviation</span><span class="v flag">31 mph (Sango, TN)</span></div>
+          </div>
+
+          <div class="tech-card" style="grid-column:1/-1">
+            <h3>HOS Compliance — Daily Breakdown</h3>
+            <div class="sub">// Property-Carrying Driver · 11/14/30/70 limits</div>
+            <table class="hos-table">
+              <thead><tr>
+                <th>Sana</th><th>Haydash</th><th>11h limit</th><th>14h window</th><th>10h reset</th><th>30m break</th><th>70h / 8d</th><th>Status</th>
+              </tr></thead>
+              <tbody>
+                <tr>
+                  <td>Jan 1, 2026</td><td>6.95 soat</td>
+                  <td><span class="chk ok">✓</span></td><td><span class="chk ok">✓</span></td><td>—</td>
+                  <td><span class="chk warn">⚠</span> Tasdiqlanmagan</td><td><span class="chk ok">✓</span></td>
+                  <td style="color:var(--amber)">QISMAN</td>
+                </tr>
+                <tr>
+                  <td>Jan 2, 2026</td><td>8.28 soat</td>
+                  <td><span class="chk ok">✓</span></td><td><span class="chk ok">✓</span></td>
+                  <td><span class="chk ok">✓</span> 14.07h</td>
+                  <td><span class="chk ok">✓</span> 46m + 97m</td><td><span class="chk ok">✓</span></td>
+                  <td style="color:var(--moss)">PASS</td>
+                </tr>
+                <tr>
+                  <td>Jan 3, 2026</td><td>1.01 soat</td>
+                  <td><span class="chk ok">✓</span></td><td><span class="chk ok">✓</span></td>
+                  <td>—</td><td>N/A</td><td><span class="chk ok">✓</span></td>
+                  <td style="color:var(--moss)">PASS</td>
+                </tr>
+              </tbody>
+            </table>
+            <p style="margin-top:18px;font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--ink-faint);line-height:1.7;">
+              ▸ Jan 2 tanaffuslari: <span style="color:var(--ink)">14:18→15:04 UTC (46m, Ladds, TN)</span> · <span style="color:var(--ink)">16:35→18:12 UTC (97m, Rocky Fork, TN)</span> · <span style="color:var(--ink)">21:52→22:27 UTC (35m, New Columbia, IL)</span><br>
+              ▸ Jan 1 muammo: <span style="color:var(--amber)">62-min Hillsboro, TN to'xtalish RODS da tasdiqlanmagan</span>
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <div class="tab-pane" data-pane="rec">
+        <div class="rec-grid">
+          <div class="rec-col" data-priority="now">
+            <div class="priority">● Darhol · 0–7 kun</div>
+            <h4>Immediate <em>Action</em></h4>
+            <ul>
+              <li><span class="num">01</span><div><strong>Jan 3–31 yozuvlarini taqdim eting</strong>Barcha ELD log fayllarini (CSV / LDIF) provayderdan rasmiy so'rang. 6 oylik retention talabiga rioya.</div></li>
+              <li><span class="num">02</span><div><strong>ELD kalibratsiyasini tekshiring</strong>Tezlik sensori va GPS modul orasidagi 22.4 mph farqni texnik xizmat orqali tekshiring va hujjatlang.</div></li>
+              <li><span class="num">03</span><div><strong>Odometer & GPS koordinatalarini hujjatlang</strong>Har navbatchilik boshi va oxirida odometer fotosuratlari, GPS reading screenshot.</div></li>
+            </ul>
+          </div>
+
+          <div class="rec-col" data-priority="soon">
+            <div class="priority">● Qisqa muddat · 15–30 kun</div>
+            <h4>Short-Term <em>Fixes</em></h4>
+            <ul>
+              <li><span class="num">04</span><div><strong>Supporting Documents to'plang</strong>Yanvarning barcha yoqilg'i cheklari, to'lov kvitansiyalari, BOLs — RODS bilan vaqt bo'yicha taqqoslash uchun.</div></li>
+              <li><span class="num">05</span><div><strong>PDF metadata muammosini hal qiling</strong>ELD provider bilan bog'lanib rasmiy "certified log export" oling — native ELD format.</div></li>
+              <li><span class="num">06</span><div><strong>HOS log auditini ELD provider orqali</strong>Jan 1 va Hillsboro 62-min to'xtalish — duty status tasdig'i.</div></li>
+            </ul>
+          </div>
+
+          <div class="rec-col" data-priority="long">
+            <div class="priority">● Uzoq muddat · 30+ kun</div>
+            <h4>Long-Term <em>Compliance</em></h4>
+            <ul>
+              <li><span class="num">07</span><div><strong>ELD firmware ni yangilang</strong>FMCSA-sertifikatlangan yangi firmware — speed sensor accuracy va tamper-evidence bilan.</div></li>
+              <li><span class="num">08</span><div><strong>HOS yozma siyosat (written policy)</strong>Haydovchi bilan rasmiy ko'rsatma tuzib imzolating. Annual training reminder.</div></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="disclaimer">
+          <p><strong>ESLATMA —</strong> Ushbu tahlil IFTA Movement Report (GPS / odometer ma'lumotlari) asosida amalga oshirildi. To'liq audit uchun ELD-dan eksport qilingan RODS fayllari (ELD native format), supporting documents va Driver Qualification File ham talab etiladi. Faqat real ma'lumotlarga tayanildi — taxminlar yo'q.</p>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</section>
+
+<section class="ref-section" id="hos-ref">
+  <div class="container">
+    <div class="sec-head">
+      <div class="sec-num">REF · 01</div>
+      <div>
+        <div class="sec-eyebrow">Hours of Service · Property-Carrying Drivers</div>
+        <h2 class="sec-title">Asosiy <em>HOS</em> chegaralari — soniyalik aniqlik bilan.</h2>
+        <p class="sec-lead">eRODS bu to'rt raqamni soniyalik aniqlikda nazorat qiladi. Birortasini 60 soniya oshirish ham alohida violation hisoblanadi.</p>
+      </div>
+    </div>
+    <div class="hos-grid">
+      <div class="hos-card">
+        <div class="label">Driving Limit</div>
+        <div class="hours">11<em>h</em></div>
+        <p>10 soatlik off-duty davridan keyin maksimal haydash vaqti.</p>
+      </div>
+      <div class="hos-card">
+        <div class="label">On-Duty Window</div>
+        <div class="hours">14<em>h</em></div>
+        <p>Smena boshlanganidan beri uzluksiz oyna. Tanaffuslar to'xtatmaydi.</p>
+      </div>
+      <div class="hos-card">
+        <div class="label">Break Requirement</div>
+        <div class="hours">30<em>m</em></div>
+        <p>8 soat haydashdan keyin majburiy uzluksiz tanaffus.</p>
+      </div>
+      <div class="hos-card">
+        <div class="label">7/8-Day Limit</div>
+        <div class="hours">70<em>h</em></div>
+        <p>8 ketma-ket kun ichida On-Duty maksimum. 34h restart re-set qiladi.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="ref-section" id="flags-ref" style="background:var(--bg)">
+  <div class="container">
+    <div class="sec-head">
+      <div class="sec-num">REF · 02</div>
+      <div>
+        <div class="sec-eyebrow">Red flag detection categories</div>
+        <h2 class="sec-title">Tizim aniqlaydigan <em>besh</em> turdagi anomaliyalar.</h2>
+        <p class="sec-lead">Ushbu kategoriyalarning hech biri tasodifan paydo bo'lmaydi — har biri 49 CFR Part 395 ning aniq moddasiga bog'lanadi.</p>
+      </div>
+    </div>
+    <div class="flags-row">
+      <div class="flag-mini">
+        <div class="num">01</div>
+        <h5>Odometer Jumps</h5>
+        <span class="cfr">§ 395.24(c)</span>
+        <p>Navbatchilik orasidagi 1 mildan oshiq farq. Unassigned driving belgisi.</p>
+      </div>
+      <div class="flag-mini">
+        <div class="num">02</div>
+        <h5>GPS Teleportation</h5>
+        <span class="cfr">§ 395.26(b)(7)</span>
+        <p>Vaqt birligida fizikaviy mumkin bo'lmagan masofa — sensor manipulation.</p>
+      </div>
+      <div class="flag-mini">
+        <div class="num">03</div>
+        <h5>Uncertified Edits</h5>
+        <span class="cfr">§ 395.30(c)</span>
+        <p>Drayver tasdiqlamagan tahrirlar va shubhali annotation izohlari.</p>
+      </div>
+      <div class="flag-mini">
+        <div class="num">04</div>
+        <h5>HOS Violations</h5>
+        <span class="cfr">§ 395.3</span>
+        <p>11 / 14 / 70 soat va 30-daqiqa qoidalarining oshib ketishi.</p>
+      </div>
+      <div class="flag-mini">
+        <div class="num">05</div>
+        <h5>Doc Mismatch</h5>
+        <span class="cfr">§ 395.11</span>
+        <p>Yoqilg'i cheklari, BOL va GPS lokatsiyalari log statusiga mos emasligi.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<footer id="about">
+  <div class="container">
+    <div class="footer-grid">
+      <div>
+        <div class="footer-brand">eRODS <em>audit-tool</em></div>
+        <p>Federal Motor Carrier Safety Administration ning Electronic Records of Duty Status standartlariga asoslangan texnik audit tool. 49 CFR Part 395 va Part 385 talablarini qamrab oladi.</p>
+      </div>
+      <div>
+        <h6>Tool</h6>
+        <ul>
+          <li><a href="#upload">Upload</a></li>
+          <li><a href="#hos-ref">HOS Rules</a></li>
+          <li><a href="#flags-ref">Red Flags</a></li>
+        </ul>
+      </div>
+      <div>
+        <h6>References</h6>
+        <ul>
+          <li>49 CFR § 395.3</li>
+          <li>49 CFR § 395.8</li>
+          <li>49 CFR § 395.22</li>
+          <li>49 CFR § 395.24</li>
+          <li>49 CFR § 395.26</li>
+          <li>49 CFR § 395.30</li>
+        </ul>
+      </div>
+      <div>
+        <h6>Sources</h6>
+        <ul>
+          <li>All About eRODS — FMCSA</li>
+          <li>New Entrant Safety Audit</li>
+          <li>Auditing HOS Logs</li>
+        </ul>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <span>FILE — 001 / FMCSA-eRODS-TOOL / 2026.05</span>
+      <span>BUILT FOR · TECHNICAL SAFETY AUDITORS</span>
+    </div>
+  </div>
+</footer>
+
+<script>
+const dropzone = document.getElementById('dropzone');
+const fileInput = document.getElementById('fileInput');
+const fileInfo = document.getElementById('fileInfo');
+const fileName = document.getElementById('fileName');
+const fileSize = document.getElementById('fileSize');
+const clearFile = document.getElementById('clearFile');
+const analyzeBtn = document.getElementById('analyzeBtn');
+const demoLink = document.getElementById('demoLink');
+const processing = document.getElementById('processing');
+const result = document.getElementById('result');
+const procFill = document.getElementById('procFill');
+
+let selectedFile = null;
+
+dropzone.addEventListener('click', (e) => {
+  if (e.target.closest('.file-info')) return;
+  fileInput.click();
+});
+
+['dragenter','dragover'].forEach(ev =>
+  dropzone.addEventListener(ev, (e) => { e.preventDefault(); dropzone.classList.add('drag'); }));
+['dragleave','drop'].forEach(ev =>
+  dropzone.addEventListener(ev, (e) => { e.preventDefault(); dropzone.classList.remove('drag'); }));
+dropzone.addEventListener('drop', (e) => {
+  if (e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]);
+});
+fileInput.addEventListener('change', (e) => {
+  if (e.target.files.length) handleFile(e.target.files[0]);
+});
+
+function fmtBytes(b){
+  if(b<1024) return b+' B';
+  if(b<1024*1024) return (b/1024).toFixed(1)+' KB';
+  return (b/1024/1024).toFixed(2)+' MB';
+}
+
+function handleFile(file){
+  selectedFile = file;
+  fileName.textContent = file.name;
+  fileSize.textContent = fmtBytes(file.size) + ' · ' + (file.type || 'unknown type');
+  fileInfo.classList.add('show');
+  analyzeBtn.disabled = false;
+}
+
+clearFile.addEventListener('click', (e) => {
+  e.stopPropagation();
+  selectedFile = null;
+  fileInfo.classList.remove('show');
+  fileInput.value = '';
+  analyzeBtn.disabled = true;
+});
+
+demoLink.addEventListener('click', (e) => {
+  e.preventDefault();
+  fileName.textContent = 'DF_Trucking_Vehicle122_IFTA_Report.pdf';
+  fileSize.textContent = '12.4 MB · application/pdf · DEMO';
+  fileInfo.classList.add('show');
+  analyzeBtn.disabled = false;
+  selectedFile = { name: 'demo' };
+  analyzeBtn.scrollIntoView({behavior:'smooth', block:'center'});
+});
+
+analyzeBtn.addEventListener('click', () => {
+  if (!selectedFile) return;
+  runAnalysis();
+});
+
+function runAnalysis(){
+  result.classList.remove('show');
+  processing.classList.add('show');
+  processing.scrollIntoView({behavior:'smooth', block:'start'});
+
+  const steps = document.querySelectorAll('.proc-step');
+  steps.forEach(s => { s.classList.remove('active','done'); s.querySelector('.time').textContent='—'; });
+  procFill.style.width = '0%';
+
+  let i = 0;
+  const stepDurations = [400, 500, 450, 600, 500, 450, 350, 400];
+  const startTime = Date.now();
+
+  function nextStep(){
+    if (i > 0) {
+      const prev = steps[i-1];
+      prev.classList.remove('active');
+      prev.classList.add('done');
+      prev.querySelector('.time').textContent = ((Date.now()-startTime)/1000).toFixed(1)+'s';
+    }
+    if (i >= steps.length) {
+      procFill.style.width = '100%';
+      setTimeout(showResult, 600);
+      return;
+    }
+    steps[i].classList.add('active');
+    procFill.style.width = ((i+1)/steps.length*100)+'%';
+    setTimeout(nextStep, stepDurations[i]);
+    i++;
+  }
+  nextStep();
+}
+
+function showResult(){
+  processing.classList.remove('show');
+  result.classList.add('show');
+  setTimeout(() => {
+    const gauge = document.getElementById('gaugeFill');
+    const passProb = 0.25;
+    const failPortion = 1 - passProb;
+    const circ = 565;
+    gauge.style.strokeDashoffset = circ * (1 - failPortion);
+  }, 200);
+  result.scrollIntoView({behavior:'smooth', block:'start'});
+}
+
+document.querySelectorAll('.viol-head').forEach(head => {
+  head.addEventListener('click', () => {
+    const v = head.parentElement;
+    v.classList.toggle('open');
+  });
+});
+
+document.querySelectorAll('.tab-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
+    btn.classList.add('active');
+    document.querySelector(`.tab-pane[data-pane="${btn.dataset.tab}"]`).classList.add('active');
+  });
+});
+</script>
+
+</body>
+</html>
