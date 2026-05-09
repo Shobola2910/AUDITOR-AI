@@ -721,7 +721,7 @@ async function parseFiles(files){
         out.push({name:f.name,type:'json',rows,content:txt.slice(0,6000),meta:{}});
       } else if(ext==='pdf'){
         const p=await parsePDF(f);
-        out.push({name:f.name,type:'pdf',rows:p.rows||[],content:(p.text||"").slice(0,8000),meta:p.meta||{}});
+        out.push({name:f.name,type:'pdf',rows:p.rows,content:p.text.slice(0,8000),meta:p.meta});
       }
     } catch(e){
       out.push({name:f.name,type:ext,rows:[],content:'',meta:{},err:e.message});
@@ -731,91 +731,141 @@ async function parseFiles(files){
 }
 
 async function parsePDF(file){
-  const buf = await rBuf(file);
-  const pdf = await pdfjsLib.getDocument({data:buf}).promise;
-  const metaObj = await pdf.getMetadata().catch(()=>({}));
-  const meta = metaObj.info || {};
-  let fullText = '';
-  const rows = [];
-  // Limit to 30 pages to prevent hang on large PDFs (2460 pages = minutes)
-  const lim = Math.min(pdf.numPages, 30);
-
+  const buf=await rBuf(file);
+  const pdf=await pdfjsLib.getDocument({data:buf}).promise;
+  const metaObj=await pdf.getMetadata().catch(()=>({}));
+  const meta=metaObj.info||{};
+  let fullText='';
+  const lim=Math.min(pdf.numPages,40);
   for(let i=1;i<=lim;i++){
     try{
-      const page = await pdf.getPage(i);
-      const tc = await page.getTextContent();
-      // Group items by Y-position (PDF.js returns each token separately)
-      const yGroups = {};
-      tc.items.forEach(item => {
-        if(!item.str||!item.str.trim()) return;
-        const y = Math.round(item.transform[5]);
-        if(!yGroups[y]) yGroups[y]=[];
-        yGroups[y].push({str:item.str.trim(), x:item.transform[4]});
+      const page=await Promise.race([pdf.getPage(i),new Promise((_,r)=>setTimeout(()=>r(new Error('t')),4000))]);
+      const tc=await Promise.race([page.getTextContent(),new Promise((_,r)=>setTimeout(()=>r(new Error('t')),4000))]);
+      const yG={};
+      tc.items.forEach(it=>{
+        if(!it.str||!it.str.trim())return;
+        const y=Math.round(it.transform[5]/3)*3;
+        if(!yG[y])yG[y]=[];
+        yG[y].push({str:it.str.trim(),x:it.transform[4]});
       });
-      const sortedYs = Object.keys(yGroups).map(Number).sort((a,b)=>b-a);
-      const pageLines = sortedYs.map(y=>{
-        return yGroups[y].sort((a,b)=>a.x-b.x).map(it=>it.str).join(' ');
+      const pageLines=Object.keys(yG).map(Number).sort((a,b)=>b-a).map(y=>{
+        const sorted=yG[y].sort((a,b)=>a.x-b.x);
+        let line=sorted[0]?sorted[0].str:'';
+        for(let j=1;j<sorted.length;j++){
+          const gap=sorted[j].x-(sorted[j-1].x+(sorted[j-1].str.length*4.5));
+          line+=(gap>8?'  ':' ')+sorted[j].str;
+        }
+        return line;
       });
-      fullText += pageLines.join('\n') + '\n';
-      // Parse IFTA/ELD row pattern
-      pageLines.forEach(line=>{
-        const r = parseIFTALine(line.trim());
-        if(r) rows.push(r);
-      });
-    } catch(e){ /* skip bad page */ }
+      fullText+=pageLines.join('\n')+'\n';
+
+
+    }catch(e){}
   }
-  // Fallback 1: parse fullText lines  
+  const isIFTA=/MOVEMENT REPORT/i.test(fullText);
+  const isDailyLog=/DRIVER.S DAILY LOG|Time \(E[DS]T\)|Time \(CDT\)|Time \(PDT\)/i.test(fullText);
+  let rows=[];
+  if(isIFTA) rows=parseIFTAFormat(fullText);
+  if(!isIFTA||rows.length===0){
+    const dl=parseDailyLogFormat(fullText);
+    if(dl.length>rows.length)rows=dl;
+  }
+  if(rows.length===0)rows=parseLatLngFallback(fullText);
+  return{text:fullText.slice(0,12000),rows,meta,
+    format:isIFTA?'ifta':isDailyLog?'dailylog':'unknown'};
+}
+
+function parseIFTAFormat(text){
+  const rows=[];
+  const re=/^(\d{1,6})\s+(\d{1,2}\/\d{1,2}\/\d{2,4})\s+(\d{1,2}:\d{2}:\d{2}\s*[AP]M)\s+(.+?)\s+(-?\d{1,3}\.\d{3,9})\s+(-?\d{1,3}\.\d{3,9})\s+(\d{1,3}\.?\d*)\s+(\d{1,3})\s+([\d,]+\.?\d*)\s+([\d,]+\.?\d*)\s*$/;
+  text.split('\n').forEach(line=>{
+
+    const m=line.trim().match(re);
+    if(m)rows.push({no:+m[1],datetime:`${m[2]} ${m[3]}`,date:m[2],time:m[3],
+      location:m[4].trim(),lat:+m[5],lng:+m[6],speed:+m[7],heading:+m[8],
+      odometer:+m[9].replace(/,/g,''),engineHours:+m[10].replace(/,/g,''),
+      status:'Driving',_format:'ifta'});
+  });
   if(rows.length===0){
-    fullText.split('\n').forEach(line=>{
-      const r = parseIFTALine(line.trim());
-      if(r) rows.push(r);
-    });
+    const raw=text.replace(/[\n\r]+/g,' ').replace(/\s+/g,' ');
+
+    const re2=/(\d{1,6})\s+(\d{1,2}\/\d{1,2}\/\d{2,4})\s+(\d{1,2}:\d{2}:\d{2}\s*[AP]M)\s+(.+?)\s+(-?\d{1,3}\.\d{3,9})\s+(-?\d{1,3}\.\d{3,9})\s+(\d{1,3}\.?\d*)\s+(\d{1,3})\s+([\d,]+\.?\d*)\s+([\d,]+\.?\d*)/g;
+    let m;
+    while((m=re2.exec(raw))!==null)
+      rows.push({no:+m[1],datetime:`${m[2]} ${m[3]}`,date:m[2],time:m[3],
+        location:m[4].trim(),lat:+m[5],lng:+m[6],speed:+m[7],heading:+m[8],
+        odometer:+m[9].replace(/,/g,''),engineHours:+m[10].replace(/,/g,''),
+        status:'Driving',_format:'ifta'});
   }
-  // Fallback 2: generic - extract any rows with lat/lng pattern
+  return rows;
+}
+
+function parseDailyLogFormat(text){
+  const rows=[];
+  const driverM=text.match(/Driver Name\s+(.+?)\s{2,}Driver ID\s+(\S+)/);
+  const carrierM=text.match(/Carrier\s+([^\r\n]+)/);
+  const eldM=text.match(/ELD ID\s+(\S+)/);
+  const malfM=text.match(/Malfunction Ind\.\s+(Yes|No)/);
+  const unidM=text.match(/Unidentified Records\s+(\d+)/);
+  const certAll=[...text.matchAll(/Driver Certified\s+(Yes|No)/g)].map(m=>m[1]);
+  const driverName=driverM?driverM[1].trim():'Unknown';
+  const driverId=driverM?driverM[2].trim():'';
+  const carrier=carrierM?carrierM[1].trim():'';
+  const eldId=eldM?eldM[1]:'';
+  const malfunction=malfM?malfM[1]:'No';
+  const unidentified=unidM?+unidM[1]:0;
+  const logRe=/(\d{2}\/\d{2}),\s+(\d{2}:\d{2}:\d{2})\s+([\d:]+\s+)?(Off Duty|On Duty|Driving|Sleeper Berth|Personal Use|Yard Moves)\s+([\d.]+mi[^0-9\r\n]+?|[A-Za-z][^0-9\r\n]*?)\s+(\d{4,7})\s+([\d.]+)/g;
+
+
+  let m,dayCount=0,lastDate='';
+  while((m=logRe.exec(text))!==null){
+    if(m[1]!==lastDate){lastDate=m[1];dayCount++;}
+    const certIdx=Math.min(dayCount-1,certAll.length-1);
+    const certified=certAll[certIdx]||'Unknown';
+    rows.push({no:rows.length+1,datetime:m[1]+'/2026 '+m[2],
+      date:m[1]+'/2026',time:m[2],duration:(m[3]||'').trim(),
+      status:m[4],location:m[5].trim(),
+      odometer:+m[6],engineHours:+m[7],
+      lat:0,lng:0,speed:0,heading:0,
+      driverName:driverName,driverId:driverId,carrier:carrier,eldId:eldId,
+      malfunction:malfunction,unidentified:unidentified,certified:certified,
+      _format:'dailylog'});
+  }
   if(rows.length===0){
-    const latLngRe = /(-?\d{1,3}\.\d{4,9})\s+(-?\d{1,3}\.\d{4,9})/g;
-    let m, lineNo=0;
-    fullText.split('\n').forEach(line=>{
-      const mm = line.match(/(-?\d{1,3}\.\d{4,9})\s+(-?\d{1,3}\.\d{4,9})/);
-      if(!mm) return;
-      const lat=+mm[1], lng=+mm[2];
-      if(lat<-90||lat>90||lng<-180||lng>180) return;
-      // Try to extract speed and odometer from same line
-      const nums = (line.match(/[\d,]+\.?\d*/g)||[]).map(n=>+n.replace(/,/g,''));
-      const spdCand = nums.filter(n=>n>=0&&n<=120);
-      const odoCand = nums.filter(n=>n>1000&&n<2000000);
-      const ehCand  = nums.filter(n=>n>100&&n<100000);
-      // Extract date/time
-      const dtm = line.match(/(\d{1,2}\/\d{1,2}\/\d{2,4})\s*(\d{1,2}:\d{2}:\d{2}\s*[AP]M)?/);
-      rows.push({
-        no: ++lineNo,
-        datetime: dtm ? dtm[0] : '',
-        date: dtm ? dtm[1]||'' : '',
-        time: dtm ? dtm[2]||'' : '',
-        location: line.replace(/[\d.,\-\/:\s(AM|PM)]+/g,' ').trim().slice(0,60)||'Unknown',
-        lat, lng,
-        speed: spdCand[0]||0,
-        heading: 0,
-        odometer: odoCand[0]||0,
-        engineHours: ehCand[0]||0
-      });
-    });
+    const re2=/(\d{2}\/\d{2}),\s+(\d{2}:\d{2}:\d{2})\s+(?:[\d:]+\s+)?(Off Duty|On Duty|Driving|Sleeper Berth)/g;
+    while((m=re2.exec(text))!==null)
+      rows.push({no:rows.length+1,datetime:m[1]+'/2026 '+m[2],date:m[1]+'/2026',
+        time:m[2],status:m[3],location:'',odometer:0,engineHours:0,
+        lat:0,lng:0,speed:0,heading:0,driverName:driverName,driverId:driverId,
+        carrier:carrier,eldId:eldId,malfunction:malfunction,
+        unidentified:unidentified,certified:'Unknown',_format:'dailylog'});
   }
-  return {text:fullText.slice(0,10000), rows, meta};
+  return rows;
+}
+
+function parseLatLngFallback(text){
+  const rows=[];
+  text.split('\n').forEach((line,i)=>{
+
+    const m=line.match(/(-?\d{1,3}\.\d{4,9})\s+(-?\d{1,3}\.\d{4,9})/);
+    if(!m)return;
+    const lat=+m[1],lng=+m[2];
+    if(lat<-90||lat>90||lng<-180||lng>180)return;
+    const nums=(line.match(/[\d,]+\.?\d*/g)||[]).map(n=>+n.replace(/,/g,''));
+    rows.push({no:i,datetime:'',date:'',time:'',location:line.slice(0,50),
+      lat,lng,speed:nums.find(n=>n>=0&&n<=120)||0,heading:0,
+      odometer:nums.find(n=>n>1000&&n<2000000)||0,engineHours:0,
+      status:'',_format:'fallback'});
+  });
+  return rows;
 }
 
 function parseIFTALine(line){
-  if(!line) return null;
-  // IFTA Movement Report: No  MM/DD/YYYY  HH:MM:SS AM/PM  Location  Lat  Lng  Speed  Heading  Odometer  EngHours
-  const m = line.match(/^(\d{1,6})\s+(\d{1,2}\/\d{1,2}\/\d{2,4})\s+(\d{1,2}:\d{2}:\d{2}\s*[AP]M)\s+(.+?)\s+(-?\d{1,3}\.\d{3,9})\s+(-?\d{1,3}\.\d{3,9})\s+(\d{1,3}\.?\d*)\s+(\d{1,3})\s+([\d,]+\.?\d*)\s+([\d,]+\.?\d*)\s*$/);
-  if(!m) return null;
-  return {
-    no:+m[1], datetime:`${m[2]} ${m[3]}`, date:m[2], time:m[3],
-    location:m[4].trim(), lat:+m[5], lng:+m[6],
-    speed:+m[7], heading:+m[8],
-    odometer:+m[9].replace(/,/g,''),
-    engineHours:+m[10].replace(/,/g,'')
-  };
+  const m=line.trim().match(/^(\d{1,6})\s+(\d{1,2}\/\d{1,2}\/\d{2,4})\s+(\d{1,2}:\d{2}:\d{2}\s*[AP]M)\s+(.+?)\s+(-?\d{1,3}\.\d{3,9})\s+(-?\d{1,3}\.\d{3,9})\s+(\d{1,3}\.?\d*)\s+(\d{1,3})\s+([\d,]+\.?\d*)\s+([\d,]+\.?\d*)\s*$/);
+  if(!m)return null;
+  return{no:+m[1],datetime:`${m[2]} ${m[3]}`,date:m[2],time:m[3],location:m[4].trim(),
+    lat:+m[5],lng:+m[6],speed:+m[7],heading:+m[8],
+    odometer:+m[9].replace(/,/g,''),engineHours:+m[10].replace(/,/g,''),_format:'ifta'};
 }
 function rText(f){return new Promise((r,j)=>{const rd=new FileReader();rd.onload=()=>r(rd.result);rd.onerror=j;rd.readAsText(f)})}
 function rBuf(f){return new Promise((r,j)=>{const rd=new FileReader();rd.onload=()=>r(rd.result);rd.onerror=j;rd.readAsArrayBuffer(f)})}
@@ -906,8 +956,7 @@ async function startAnalysis(){
         if(m) p.rows.push({no:+m[1],datetime:`${m[2]} ${m[3]}`,date:m[2],time:m[3],location:m[4].trim(),lat:+m[5],lng:+m[6],speed:+m[7],heading:+m[8],odometer:+m[9].replace(/,/g,''),engineHours:+m[10].replace(/,/g,'')});
       });
       // Update status display
-      const pidx = parsed.findIndex(x=>x.name===p.name);
-      const el = document.getElementById('fst'+pidx);
+      const el = document.getElementById('fst'+parsed.indexOf(p));
       if(el){ el.className='fitem-st st-ok'; el.textContent=p.rows.length+' ROWS'; }
     }
   });
@@ -922,24 +971,19 @@ async function startAnalysis(){
 
   let deep='';
   try{
-    // 30 second timeout to prevent indefinite hang
-    const controller = new AbortController();
-    const timer = setTimeout(()=>controller.abort(), 30000);
-    const resp = await fetch('/api/analyze',{
-      method:'POST',
+    const ctrl=new AbortController();
+    const timer=setTimeout(()=>ctrl.abort(),30000);
+    const resp=await fetch('/api/analyze',{method:'POST',
       headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({prompt}),
-      signal: controller.signal
-    });
+      body:JSON.stringify({prompt}),signal:ctrl.signal});
     clearTimeout(timer);
-    const d = await resp.json();
-    if(d.error) throw new Error(d.error);
-    deep = d.text||'';
+    const d=await resp.json();
+    if(d.error)throw new Error(d.error);
+    deep=d.text||'';
   } catch(e){
-    const isTimeout = e.name==='AbortError';
-    deep = lang==='uz'
-      ? `[AI tahlili ${isTimeout?'vaqt tugadi':'mavjud emas'} — lokal 25-nuqtali natijalar yuqorida]\n\nXato: ${e.message}\n\nLokal tahlil: ${eng.checks.length} tekshiruv, ${eng.viols.length} qoidabuzarlik, ball: ${eng.score}/100`
-      : `[AI analysis ${isTimeout?'timed out':'unavailable'} — local 25-point results shown above]\n\nError: ${e.message}\n\nLocal engine completed: ${eng.checks.length} checks, ${eng.viols.length} violations, score: ${eng.score}/100`;
+    deep=lang==='uz'
+      ?`[AI tahlili mavjud emas - lokal tahlil natijalari yuqorida]\n\nXato: ${e.message}\n\nLokal: ${eng.checks.length} tekshiruv, ${eng.viols.length} qoidabuzarlik, ball ${eng.score}/100`
+      :`[AI analysis unavailable - local results shown above]\n\nError: ${e.message}\n\nLocal engine: ${eng.checks.length} checks, ${eng.viols.length} violations, score ${eng.score}/100`;
   }
 
   document.getElementById('ps13').className='pstep done';
@@ -954,20 +998,18 @@ async function startAnalysis(){
   AR={...eng,deep,parsed};
   renderResults(AR);
   abtn.disabled=false;
-  } catch(fatalErr){
-    prog.style.display='none';
-    abtn.disabled=false;
+  }catch(fatalErr){
+    prog.style.display='none';abtn.disabled=false;
     showToast('Error: '+fatalErr.message);
-    console.error('startAnalysis fatal:', fatalErr);
-    // Show partial results if engine ran
-    if(AR){ document.getElementById('results').style.display='block'; renderResults(AR); }
+    console.error('Fatal:',fatalErr);
+    if(AR){document.getElementById('results').style.display='block';renderResults(AR);}
   }
 }
 
 function buildSummary(parsed){
   return parsed.map(p=>{
     const hdr=p.rows[0]?Object.keys(p.rows[0]).join(', '):'none';
-    return`=== ${p.name} (${p.type.toUpperCase()}) ===\nColumns: ${hdr}\nRows: ${p.rows.length}\nMeta: ${JSON.stringify(p.meta)}\nSample: ${JSON.stringify((p.rows||[]).slice(0,25)).slice(0,1800)}`;
+    return`=== ${p.name} (${p.type.toUpperCase()}) ===\nColumns: ${hdr}\nRows: ${p.rows.length}\nMeta: ${JSON.stringify(p.meta)}\nSample: ${JSON.stringify(p.rows.slice(0,25)).slice(0,1800)}`;
   }).join('\n\n---\n\n');
 }
 
@@ -983,7 +1025,7 @@ function buildPrompt(summary,eng){
 Metrics: GPS records=${eng.met.gps}, Speed issues=${eng.met.spd}, ODO gap=${eng.met.odoGap}mi, Missing days=${eng.met.missDays}
 
 Top violations:
-${(eng.viols||[]).slice(0,10).map((v,i)=>`${i+1}. [${(v.sev||"").toUpperCase()}] ${v.type||""} - ${v.desc||""} (${v.sec||""})`).join('\n')}
+${eng.viols.slice(0,10).map((v,i)=>`${i+1}. [${v.sev.toUpperCase()}] ${v.type} - ${v.desc} (${v.sec})`).join('\n')}
 
 Raw data:
 ${summary.slice(0,6000)}
@@ -1092,25 +1134,14 @@ function runEngine(parsed){
     files:parsed.length,score,passed
   };
 
-  return{
-    score, verdict, passPct,
-    bk:   bk   || {critical:0,high:0,medium:0,low:0},
-    sb:   sb   || [],
-    viols:viols|| [],
-    checks:checks||[],
-    passed: passed||0,
-    hosData: (hosResult&&hosResult.days)||[],
-    met:  met  || {totalV:0,gps:0,spd:0,odoGap:'0',missDays:0,files:0,score,passed:0},
-    missing: missing||[],
-    ft: {hasELD,hasIFTA,hasFuel,hasBOL}
-  };
+  return{score,verdict,passPct,bk,sb,viols,checks,passed,hosData:hosResult.days,met,missing,ft:{hasELD,hasIFTA,hasFuel,hasBOL}};
 }
 
 // ── ODOMETER CHECK ─────────────────────────────────────────
 function checkOdometer(rows,viols){
   const R={mono:{s:'skip',d:'No odometer data'},jump:{s:'skip',d:'No odometer data'},ratio:{s:'skip',d:'No GPS data'},eh:{s:'skip',d:'No engine hours'},cont:{s:'skip',d:'Insufficient data'},odoGap:0};
   if(rows.length<2)return R;
-  const s=rows[0]||{};
+  const s=rows[0];
   const oc=col(s,/odo|odometer/i);
   const lc=col(s,/^lat|latitude/i);
   const gc=col(s,/^l[no]g?|longitude/i);
@@ -1160,7 +1191,7 @@ function checkOdometer(rows,viols){
   }
 
   if(ec&&oc&&R.odoGap>0){
-    const fEH=rows[0]&&ec?+String((rows[0][ec]||'0')).replace(/,/g,'')||0:0;
+    const fEH=+String(rows[0][ec]).replace(/,/g,'')||0;
     const lEH=+String(rows[rows.length-1][ec]).replace(/,/g,'')||0;
     const ehGap=lEH-fEH;
     if(ehGap>0){
@@ -1175,7 +1206,6 @@ function checkOdometer(rows,viols){
     const byDay={};
     rows.forEach(r=>{
       const d=new Date(r[dc]);if(isNaN(d))return;
-      if(isNaN(d))return;
       const k=d.toISOString().slice(0,10);
       if(!byDay[k]){byDay[k]={first:null,last:null}}
       const o=+String(r[oc]).replace(/,/g,'')||0;
@@ -1196,7 +1226,7 @@ function checkOdometer(rows,viols){
 function checkGPS(rows,viols){
   const R={spd:{s:'skip',d:'No GPS/speed data'},tele:{s:'skip',d:'No GPS data'},drop:{s:'skip',d:'No timestamps'},rev:{s:'skip',d:'No heading data'},addr:{s:'skip',d:'No address data'},spdIssues:0};
   if(rows.length<2)return R;
-  const s=rows[0]||{};
+  const s=rows[0];
   const lc=col(s,/^lat|latitude/i);
   const gc=col(s,/^l[no]g?|longitude/i);
   const sc=col(s,/^speed|mph/i);
@@ -1207,7 +1237,7 @@ function checkGPS(rows,viols){
   if(!lc||!gc)return R;
   let teleports=0,drops=0,spdMis=0,spdTotal=0;
 
-  for(let i=1;i<Math.min(rows.length,5000);i++){
+  for(let i=1;i<Math.min(rows.length,2000);i++){
     const r1=rows[i-1],r2=rows[i];
     const la1=+r1[lc],lo1=+r1[gc],la2=+r2[lc],lo2=+r2[gc];
     if([la1,lo1,la2,lo2].some(isNaN))continue;
@@ -1277,98 +1307,133 @@ function checkGPS(rows,viols){
 
 // ── HOS CHECK ──────────────────────────────────────────────
 function checkHOS(rows,viols){
-  const R={h11:{s:'skip',d:'No drive time data'},h14:{s:'skip',d:'No duty status'},h70:{s:'skip',d:'Insufficient days'},br30:{s:'skip',d:'No time data'},off10:{s:'skip',d:'No off-duty data'},re34:{s:'skip',d:'Insufficient data'},days:[],missDays:0};
+  const R={h11:{s:'skip',d:'No drive time data'},h14:{s:'skip',d:'No duty status'},
+    h70:{s:'skip',d:'Insufficient days'},br30:{s:'skip',d:'No time data'},
+    off10:{s:'skip',d:'No off-duty data'},re34:{s:'skip',d:'Insufficient data'},
+    days:[],missDays:0};
   if(!rows.length)return R;
-  const s=rows[0]||{};
-  const dc=col(s,/datetime|date.?time|date|time/i);
-  const sc=col(s,/^speed/i);
-  if(!dc)return R;
-
+  const isDL=rows.some(r=>r._format==='dailylog');
+  const s0=rows[0]||{};
+  const dcC=col(s0,/datetime|date.?time|date|time/i);
+  const scC=col(s0,/^speed/i);
   const byDay={};
   rows.forEach(r=>{
-    const d=new Date(r[dc]);if(isNaN(d))return;
+    let dateStr=r.date||(dcC?String(r[dcC]||'').slice(0,10):'');
+    if(!dateStr)return;
+    let d;
+    const mmdd=dateStr.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+    const mmdd2=dateStr.match(/^(\d{2})\/(\d{2})$/);
+    if(mmdd)d=new Date(`${mmdd[3]}-${mmdd[1]}-${mmdd[2]}`);
+    else if(mmdd2)d=new Date(`2026-${mmdd2[1]}-${mmdd2[2]}`);
+    else d=new Date(dateStr);
+    if(isNaN(d))return;
     const k=d.toISOString().slice(0,10);
-    if(!byDay[k])byDay[k]={driving:0,total:0,rows:[]};
-    byDay[k].rows.push(r);
-    byDay[k].total++;
-    if(sc&&(+r[sc]||0)>5)byDay[k].driving++;
+    if(!byDay[k])byDay[k]={driving:0,offDuty:0,total:0,rows:[]};
+    byDay[k].rows.push(r);byDay[k].total++;
+    const status=(r.status||'').toLowerCase();
+    const speed=+(r.speed||(scC?r[scC]:0)||0);
+    if(isDL&&r.duration){
+      const dm=String(r.duration).match(/(\d+):(\d+)/);
+      const hrs=dm?+dm[1]+(+dm[2]/60):0;
+      if(status.includes('driving'))byDay[k].driving+=hrs;
+      else if(status.includes('off')||status.includes('sleeper'))byDay[k].offDuty+=hrs;
+    } else {
+      if(speed>5)byDay[k].driving+=1/60;
+      if(status.includes('off'))byDay[k].offDuty+=1/60;
+    }
   });
-
   const days=Object.keys(byDay).sort();
   if(days.length>1){
     const d0=new Date(days[0]),d1=new Date(days[days.length-1]);
     const span=(!isNaN(d0)&&!isNaN(d1))?Math.ceil((d1-d0)/(864e5))+1:days.length;
     R.missDays=Math.max(0,span-days.length);
-    if(R.missDays>2)viols.push({type:'Missing Log Days',desc:`${R.missDays} day(s) of records missing in period ${days[0]} to ${days[days.length-1]}.`,loc:'Reporting period',sec:'§395.8(k)',sev:'critical',pts:15});
+    if(R.missDays>2)viols.push({type:'Missing Log Days',
+      desc:`${R.missDays} missing day(s) in ${days[0]} to ${days[days.length-1]}.`,
+      loc:'Reporting period',sec:'§395.8(k)',sev:'critical',pts:15});
   }
-
   let h11v=0,br30v=0;
   R.days=days.map(day=>{
-    const info=byDay[day]||{driving:0,rows:[]};
-    const drHrs=Math.min(info.driving/60,14);
-    const brOK=drHrs<=8||info.rows.some(r=>!r[sc]||(+r[sc]||0)===0);
+    const info=byDay[day]||{driving:0,offDuty:0,total:0};
+    const drHrs=Math.min(info.driving,14);
+    const brOK=drHrs<=8||info.offDuty>=0.5;
     if(!brOK&&drHrs>8)br30v++;
     let status='ok';
-    if(drHrs>11){
-      h11v++;status='danger';
-      viols.push({type:'11-Hour Drive Limit Exceeded',desc:`Estimated ${drHrs.toFixed(1)} hrs driving on ${day} (>11 hr limit).`,loc:day,sec:'§395.3(a)(3)(i)',sev:'critical',pts:15});
+    if(drHrs>11){h11v++;status='danger';
+      viols.push({type:'11-Hour Drive Limit',desc:`${drHrs.toFixed(1)}h driving on ${day} exceeds 11-hr limit.`,
+        loc:day,sec:'§395.3(a)(3)(i)',sev:'critical',pts:15});
     } else if(drHrs>9)status='warn';
-    return{date:new Date(day).toLocaleDateString('en-US',{month:'short',day:'numeric'}),drHrs:drHrs.toFixed(1),brOK,pct:Math.min((drHrs/11)*100,100),status};
+    return{date:new Date(day).toLocaleDateString('en-US',{month:'short',day:'numeric'}),
+      drHrs:drHrs.toFixed(1),brOK,pct:Math.min((drHrs/11)*100,100),status};
   });
-
-  R.h11={s:h11v===0?'pass':'fail',d:h11v===0?'11-hr rule respected on all days':`Violated on ${h11v} day(s)`};
+  R.h11={s:h11v===0?'pass':'fail',d:h11v===0?'11-hr rule OK on all days':`Violated on ${h11v} day(s)`};
   R.h14={s:'pass',d:'14-hr window within estimates'};
-  R.h70={s:days.length>7?'pass':'skip',d:days.length>7?'70/8-cycle within estimates':'Insufficient days'};
-  R.br30={s:br30v===0?'pass':'warn',d:br30v===0?'No break violations detected':`${br30v} potential break violation(s)`};
-  R.off10={s:'pass',d:'10-hr reset assumed between days'};
-  R.re34={s:'skip',d:'34-hr restart needs full duty status log'};
+  R.h70={s:days.length>7?'pass':'skip',d:days.length>7?'70/8-cycle OK':'Need 8+ days to verify'};
+  R.br30={s:br30v===0?'pass':'warn',d:br30v===0?'No break violations':`${br30v} potential violation(s)`};
+  R.off10={s:'pass',d:'10-hr reset between days'};
+  R.re34={s:'skip',d:'34-hr restart: needs full duty status log'};
   return R;
 }
 
 // ── ELD INTEGRITY CHECK ────────────────────────────────────
 function checkELD(parsed,viols){
-  const R={cert:{s:'skip',d:'No cert data'},edits:{s:'skip',d:'No edit log'},login:{s:'skip',d:'No login events'},unid:{s:'skip',d:'No driver data'},anno:{s:'skip',d:'No annotations'}};
-  let edits=0,unid=0,annos=0;
-
+  const R={cert:{s:'skip',d:'No cert data'},edits:{s:'skip',d:'No edit log'},
+    login:{s:'skip',d:'No login events'},unid:{s:'skip',d:'No driver data'},
+    anno:{s:'skip',d:'No annotations'}};
+  let edits=0,unid=0,annos=0,certNo=0,certTotal=0,hasData=false;
   parsed.forEach(p=>{
     if(!p.rows.length)return;
-    const s=p.rows[0]||{};
-    const ce=col(s,/certif/i);
-    const ed=col(s,/edit|modif/i);
-    const ev=col(s,/event.?type|action/i);
-    const dr=col(s,/driver|user.?id/i);
-    const an=col(s,/annot|note|comment/i);
-
-    if(ce)R.cert={s:'pass',d:'Certification column present'};
-    if(ev)R.login={s:'pass',d:'Event type column present'};
-
-    p.rows.forEach(r=>{
-      if(ed&&r[ed]&&/yes|true|1|edit/i.test(String(r[ed])))edits++;
-      if(dr&&(!r[dr]||/unident|unknown|none/i.test(String(r[dr]))))unid++;
-      if(an&&r[an]){
-        const a=String(r[an]).toLowerCase();
-        if(a.includes('personal')||a.includes('yard')||a.includes('test'))annos++;
-      }
-    });
+    const isDL=p.rows.some(r=>r._format==='dailylog');
+    if(isDL){
+      hasData=true;
+      const seen=new Set();
+      p.rows.forEach(r=>{
+        const dayKey=r.date||'';
+        if(!seen.has(dayKey)&&r.certified){
+          seen.add(dayKey);
+          certTotal++;
+          if(r.certified==='No')certNo++;
+        }
+        if(r.malfunction==='Yes')
+          viols.push({type:'ELD Malfunction Active',desc:'Malfunction indicator on. ELD may not be recording accurately.',
+            loc:r.datetime||'Log',sec:'§395.34(a)',sev:'critical',pts:15});
+        if(+r.unidentified>0){unid+=+r.unidentified;}
+      });
+    } else {
+      const s0=p.rows[0]||{};
+      const ce=col(s0,/certif/i),ed=col(s0,/edit|modif/i),
+            ev=col(s0,/event.?type|action/i),dr=col(s0,/driver|user.?id/i),
+            an=col(s0,/annot|note|comment/i);
+      if(ce||ev||dr)hasData=true;
+      if(ev)R.login={s:'pass',d:'Event type column present'};
+      p.rows.forEach(r=>{
+        if(ed&&r[ed]&&/yes|true|1|edit/i.test(String(r[ed])))edits++;
+        if(dr&&(!r[dr]||/unident|unknown/i.test(String(r[dr]))))unid++;
+        if(an&&r[an]){const a=String(r[an]).toLowerCase();
+          if(a.includes('personal')||a.includes('yard')||a.includes('test'))annos++;}
+      });
+    }
   });
-
-  if(edits>0){
-    R.edits={s:edits>10?'fail':'warn',d:`${edits} edit event(s) detected`};
-    if(edits>10)viols.push({type:'Excessive Log Edits',desc:`${edits} retroactive edits. High volume suggests log manipulation.`,loc:'ELD records',sec:'§395.30(c)',sev:'high',pts:8});
-  } else if(edits===0&&parsed.some(p=>p.rows.length>0)){
-    R.edits={s:'pass',d:'No retroactive edits found'};
-  }
-
+  if(certTotal>0){
+    if(certNo>0){
+      R.cert={s:'fail',d:`${certNo}/${certTotal} day(s) NOT certified (§395.30(a))`};
+      viols.push({type:'Uncertified Daily Log',
+        desc:`${certNo} day(s) not certified by driver. Required within 24hrs of log period.`,
+        loc:'Daily logs',sec:'§395.30(a)',sev:'critical',pts:15});
+    } else R.cert={s:'pass',d:`All ${certTotal} day(s) certified by driver`};
+  } else if(hasData) R.cert={s:'warn',d:'Certification status could not be determined'};
   if(unid>0){
-    R.unid={s:'fail',d:`${unid} unidentified driving record(s)`};
-    viols.push({type:'Unidentified Driving',desc:`${unid} records show motion without driver ID assignment.`,loc:'ELD records',sec:'§395.32(a)',sev:'high',pts:8});
-  } else if(parsed.some(p=>p.rows.length>0&&col(p.rows[0]||{},/driver/i))){
-    R.unid={s:'pass',d:'All driving assigned to identified driver'};
-  }
-
-  if(annos>5){R.anno={s:'warn',d:`${annos} suspicious annotations (personal use/yard)`}}
-  else if(parsed.some(p=>col(p.rows[0]||{},/annot|note/i))){R.anno={s:'pass',d:'No suspicious annotation patterns'}}
-
+    R.unid={s:'fail',d:`${unid} unidentified record(s)`};
+    viols.push({type:'Unidentified Driving Records',desc:`${unid} unidentified record(s). Must be assigned within 8 days.`,
+      loc:'ELD',sec:'§395.32(a)',sev:'high',pts:8});
+  } else if(hasData) R.unid={s:'pass',d:'No unidentified driving records'};
+  if(edits>0){
+    R.edits={s:edits>10?'fail':'warn',d:`${edits} edit(s) detected`};
+    if(edits>10)viols.push({type:'Excessive Log Edits',desc:`${edits} retroactive edits found.`,
+      loc:'ELD',sec:'§395.30(c)',sev:'high',pts:8});
+  } else if(hasData) R.edits={s:'pass',d:'No retroactive edits'};
+  if(annos>5)R.anno={s:'warn',d:`${annos} suspicious annotations`};
+  else if(hasData)R.anno={s:'pass',d:'No suspicious annotations'};
+  if(hasData)R.login={s:'pass',d:'ELD data present'};
   return R;
 }
 
@@ -1405,8 +1470,8 @@ function checkXVal(parsed,ft,viols){
   let hasDr=false,hasVeh=false;
   parsed.forEach(p=>{
     if(!p.rows[0])return;
-    if(col(p.rows[0]||{},/driver|user/i))hasDr=true;
-    if(col(p.rows[0]||{},/vehicle|unit|truck/i))hasVeh=true;
+    if(col(p.rows[0],/driver|user/i))hasDr=true;
+    if(col(p.rows[0],/vehicle|unit|truck/i))hasVeh=true;
   });
   if(hasDr&&hasVeh)R.dv={s:'pass',d:'Driver+vehicle assignment data present'};
   return R;
@@ -1414,21 +1479,15 @@ function checkXVal(parsed,ft,viols){
 
 // ── RENDER RESULTS ─────────────────────────────────────────
 function renderResults(data){
-  if(!data){console.error('renderResults: no data');return;}
-  // Defensive defaults - prevent any .length on undefined
-  data.viols   = data.viols   || [];
-  data.checks  = data.checks  || [];
-  data.sb      = data.sb      || [];
-  data.missing = data.missing || [];
-  data.hosData = data.hosData || [];
-  data.bk      = data.bk      || {critical:0,high:0,medium:0,low:0};
-  data.met     = data.met     || {totalV:0,gps:0,spd:0,odoGap:'0',missDays:0,files:0,score:0,passed:0};
-  data.ft      = data.ft      || {};
-  data.score   = data.score   || 0;
-  data.passPct = data.passPct || '—';
-  data.verdict = data.verdict || 'warn';
-  data.passed  = data.passed  || 0;
-  data.deep    = data.deep    || '';
+  if(!data) return;
+  try{
+  // Defensive defaults
+  data.viols=data.viols||[];data.checks=data.checks||[];data.sb=data.sb||[];
+  data.missing=data.missing||[];data.hosData=data.hosData||[];
+  data.bk=data.bk||{critical:0,high:0,medium:0,low:0};
+  data.met=data.met||{totalV:0,gps:0,spd:0,odoGap:'0',missDays:0,files:0,score:0,passed:0};
+  data.ft=data.ft||{};data.score=data.score||0;data.passPct=data.passPct||'—';
+  data.verdict=data.verdict||'warn';data.passed=data.passed||0;data.deep=data.deep||'';
   // Score circle
   const score=data.score;
   const scol=score>=85?'#22c55e':score>=70?'#f59e0b':score>=50?'#f97316':'#ef4444';
@@ -1512,7 +1571,7 @@ function renderResults(data){
   }).join('');
 
   // Charts
-  try{ renderCharts(data); } catch(e){ console.warn('Chart render error:', e); }
+  try{renderCharts(data);}catch(ce){console.warn('Chart error:',ce);}
 
   // HOS
   document.getElementById('hosgrd').innerHTML=(data.hosData||[]).slice(0,28).map(d=>`
@@ -1565,6 +1624,7 @@ function renderResults(data){
       <div class="ac-txt"><div class="ac-title">${a.title}</div><div class="ac-desc">${a.desc}</div></div>
       <span class="actag ${a.tag}">${a.tlbl}</span>
     </div>`).join('');
+  }catch(e){console.error('renderResults error:',e);showToast('Render error: '+e.message);}
 }
 
 // ── CHARTS ─────────────────────────────────────────────────
@@ -1678,7 +1738,7 @@ function exportPDF(){
     if(y>210){doc.addPage();y=M}
     doc.setTextColor(25,30,40);doc.setFontSize(12);doc.setFont('helvetica','bold');doc.text('Deep AI Audit Analysis',M,y);y+=6;
     doc.setFontSize(7.5);doc.setFont('helvetica','normal');doc.setTextColor(55,60,72);
-    const aiL=doc.splitTextToSize((AR.deep||"").slice(0,4000),W-M*2);
+    const aiL=doc.splitTextToSize(AR.deep.slice(0,4000),W-M*2);
     aiL.forEach(l=>{if(y>275){doc.addPage();y=M}doc.text(l,M,y);y+=3.8});
   }
 
