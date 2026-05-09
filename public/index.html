@@ -721,7 +721,7 @@ async function parseFiles(files){
         out.push({name:f.name,type:'json',rows,content:txt.slice(0,6000),meta:{}});
       } else if(ext==='pdf'){
         const p=await parsePDF(f);
-        out.push({name:f.name,type:'pdf',rows:p.rows,content:p.text.slice(0,8000),meta:p.meta});
+        out.push({name:f.name,type:'pdf',rows:p.rows||[],content:(p.text||"").slice(0,8000),meta:p.meta||{}});
       }
     } catch(e){
       out.push({name:f.name,type:ext,rows:[],content:'',meta:{},err:e.message});
@@ -967,7 +967,7 @@ async function startAnalysis(){
 function buildSummary(parsed){
   return parsed.map(p=>{
     const hdr=p.rows[0]?Object.keys(p.rows[0]).join(', '):'none';
-    return`=== ${p.name} (${p.type.toUpperCase()}) ===\nColumns: ${hdr}\nRows: ${p.rows.length}\nMeta: ${JSON.stringify(p.meta)}\nSample: ${JSON.stringify(p.rows.slice(0,25)).slice(0,1800)}`;
+    return`=== ${p.name} (${p.type.toUpperCase()}) ===\nColumns: ${hdr}\nRows: ${p.rows.length}\nMeta: ${JSON.stringify(p.meta)}\nSample: ${JSON.stringify((p.rows||[]).slice(0,25)).slice(0,1800)}`;
   }).join('\n\n---\n\n');
 }
 
@@ -983,7 +983,7 @@ function buildPrompt(summary,eng){
 Metrics: GPS records=${eng.met.gps}, Speed issues=${eng.met.spd}, ODO gap=${eng.met.odoGap}mi, Missing days=${eng.met.missDays}
 
 Top violations:
-${eng.violations.slice(0,10).map((v,i)=>`${i+1}. [${v.sev.toUpperCase()}] ${v.type} - ${v.desc} (${v.sec})`).join('\n')}
+${(eng.viols||[]).slice(0,10).map((v,i)=>`${i+1}. [${(v.sev||"").toUpperCase()}] ${v.type||""} - ${v.desc||""} (${v.sec||""})`).join('\n')}
 
 Raw data:
 ${summary.slice(0,6000)}
@@ -1175,6 +1175,7 @@ function checkOdometer(rows,viols){
     const byDay={};
     rows.forEach(r=>{
       const d=new Date(r[dc]);if(isNaN(d))return;
+      if(isNaN(d))return;
       const k=d.toISOString().slice(0,10);
       if(!byDay[k]){byDay[k]={first:null,last:null}}
       const o=+String(r[oc]).replace(/,/g,'')||0;
@@ -1295,14 +1296,15 @@ function checkHOS(rows,viols){
 
   const days=Object.keys(byDay).sort();
   if(days.length>1){
-    const span=Math.ceil((new Date(days[days.length-1])-new Date(days[0]))/(864e5))+1;
+    const d0=new Date(days[0]),d1=new Date(days[days.length-1]);
+    const span=(!isNaN(d0)&&!isNaN(d1))?Math.ceil((d1-d0)/(864e5))+1:days.length;
     R.missDays=Math.max(0,span-days.length);
     if(R.missDays>2)viols.push({type:'Missing Log Days',desc:`${R.missDays} day(s) of records missing in period ${days[0]} to ${days[days.length-1]}.`,loc:'Reporting period',sec:'§395.8(k)',sev:'critical',pts:15});
   }
 
   let h11v=0,br30v=0;
   R.days=days.map(day=>{
-    const info=byDay[day];
+    const info=byDay[day]||{driving:0,rows:[]};
     const drHrs=Math.min(info.driving/60,14);
     const brOK=drHrs<=8||info.rows.some(r=>!r[sc]||(+r[sc]||0)===0);
     if(!brOK&&drHrs>8)br30v++;
@@ -1676,7 +1678,7 @@ function exportPDF(){
     if(y>210){doc.addPage();y=M}
     doc.setTextColor(25,30,40);doc.setFontSize(12);doc.setFont('helvetica','bold');doc.text('Deep AI Audit Analysis',M,y);y+=6;
     doc.setFontSize(7.5);doc.setFont('helvetica','normal');doc.setTextColor(55,60,72);
-    const aiL=doc.splitTextToSize(AR.deep.slice(0,4000),W-M*2);
+    const aiL=doc.splitTextToSize((AR.deep||"").slice(0,4000),W-M*2);
     aiL.forEach(l=>{if(y>275){doc.addPage();y=M}doc.text(l,M,y);y+=3.8});
   }
 
